@@ -23,7 +23,3 @@ if(CPY_BASE_SEG_IMG)
 	add_custom_target(cpyImages COMMAND ${CMAKE_COMMAND} -E copy ${Segmentation_SOURCE_DIR}/images/* ${CMAKE_CURRENT_BINARY_DIR})
 	add_dependencies(segment cpyImages)
 endif(CPY_BASE_SEG_IMG)
-
-# configure_file(${Segmentation_SOURCE_DIR}/images/* . COPYONLY)
-
-

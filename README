@@ -1,0 +1,15 @@
+Opencv version used: 3.4.5
+Halide version used: 2018_02_15
+
+Halide instructions:
+1. Download LLVM:
+svn co https://llvm.org/svn/llvm-project/llvm/branches/release_40 llvm4.0
+svn co https://llvm.org/svn/llvm-project/cfe/branches/release_40 llvm4.0/tools/clang
+2. Build LVM (takes ~1-2hrs):
+cmake -DLLVM_ENABLE_TERMINFO=OFF -DLLVM_TARGETS_TO_BUILD="X86;ARM;NVPTX;AArch64;Mips;PowerPC" -DLLVM_ENABLE_ASSERTIONS=ON -DCMAKE_BUILD_TYPE=Release ..
+3. Export path variables on .bashrc:
+export LLVM_CONFIG=<path to llvm>/build/bin/llvm-config
+export CLANG=<path to llvm>/build/bin/clang
+4. Clone halide https://github.com/halide/Halide.git and checkout the correct version
+5. Build Halide:
+cmake -DLLVM_DIR=/path-to-llvm-build/lib/cmake/llvm -DCMAKE_BUILD_TYPE=Release /path/to/halide/CMakeLists
