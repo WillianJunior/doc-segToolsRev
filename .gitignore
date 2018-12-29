@@ -33,3 +33,7 @@
 
 # images
 *.tiff
+
+# cmake related
+build
+Makefile
