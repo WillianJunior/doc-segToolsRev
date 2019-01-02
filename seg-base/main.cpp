@@ -7,10 +7,8 @@
 
 #include <iostream>
 
-// #include "ConnComponents.hpp"
 #include "pixelsOps.hpp"
 
-// #include <opencv2/highgui.hpp>
 #include <opencv2/opencv.hpp>
 
 #define CONTINUE 0

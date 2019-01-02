@@ -16,10 +16,8 @@ add_executable(segment main.cpp)
 target_link_libraries(segment serialcomponents)
 target_link_libraries(segment ${OpenCV_LIBS})
 
-set(CPY_BASE_SEG_IMG ON CACHE BOOL "Copy example images to serial build dir.")
-
 #Copy the test images to the build folder
 if(CPY_BASE_SEG_IMG)
-	add_custom_target(cpyImages COMMAND ${CMAKE_COMMAND} -E copy ${Segmentation_SOURCE_DIR}/images/* ${CMAKE_CURRENT_BINARY_DIR})
-	add_dependencies(segment cpyImages)
+	add_custom_target(cpyImagesBase COMMAND ${CMAKE_COMMAND} -E copy ${Segmentation_SOURCE_DIR}/images/* ${CMAKE_CURRENT_BINARY_DIR})
+	add_dependencies(segment cpyImagesBase)
 endif(CPY_BASE_SEG_IMG)
