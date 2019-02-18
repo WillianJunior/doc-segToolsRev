@@ -11,14 +11,19 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DDEBUG -ggdb -gdwarf-2")
 # set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wall")
 
 # base serial version
-# set(USE_BASE_SEG ON CACHE BOOL "Compile base serial version.")
-# if(USE_BASE_SEG)
+set(USE_BASE_SEG OFF CACHE BOOL "Compile base serial version.")
+if(USE_BASE_SEG)
 add_subdirectory("seg-base")
-# endif(USE_BASE_SEG)
+endif(USE_BASE_SEG)
 
-set(USE_HALIDE_SEG ON CACHE BOOL "Compile halide parallel version.")
+set(USE_HALIDE_SEG OFF CACHE BOOL "Compile halide parallel version.")
 if(USE_HALIDE_SEG)
 	add_subdirectory("seg-halide")
 endif(USE_HALIDE_SEG)
+
+set(USE_DISTILER OFF CACHE BOOL "Compile disTiler example.")
+if(USE_DISTILER)
+	add_subdirectory("disTiler")
+endif(USE_DISTILER)
 
 set(CPY_BASE_SEG_IMG ON CACHE BOOL "Copy example images to serial build dir.")
