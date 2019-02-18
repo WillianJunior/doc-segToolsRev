@@ -54,8 +54,7 @@ void* sendRecvThread(void *args) {
     // keep getting new rect's from the queue
     while (rQueue->pop(r) != 0) {
         // generate a submat from the rect's queue
-        // cv::Mat subm = input->submat(new cv::Rect(r.xi, r.yi, r.xo, r.yo));
-        cv::Mat subm = input->colRange(r.yi, r.yo).rowRange(r.xi, r.xo); // WRONG: need to convert from coordinates to init/length
+        cv::Mat subm = input->colRange(r.yi, r.yo-r.yi).rowRange(r.xi, r.xo-r.xi);
         
         // serialize the mat
         char* buffer;
@@ -78,16 +77,44 @@ void* sendRecvThread(void *args) {
 
         // copy result data back to input
         // NOT THREAD-SAFE (ok because there is no overlap)
-        cv::Mat aux = input->colRange(r.yi, r.yo).rowRange(r.xi, r.xo);
+        cv::Mat aux = input->colRange(r.yi, r.yo-r.yi).rowRange(r.xi, r.xo-r.xi);
         resultm.copyTo(aux);
 
         free(buffer);
     }
 
+    // send final empty message, signaling the end
+    int end = 0;
+    MPI_Send(&end, 1, MPI_INT, currentRank, MPI_TAG, MPI_COMM_WORLD);
+
     return NULL;
 }
 
-int distExec(int argc, char* argv[], PriorityQ<rect_t>& rQueue, cv::Mat& inImg, cv::Mat& outImg) {
+int recvTile(cv::Mat& tile, int rank) {
+    
+    // get the mat object size
+    int bufSize = 0;
+    MPI_Recv(&bufSize, 1, MPI_INT, rank, MPI_TAG, MPI_COMM_WORLD, NULL);
+
+    // get the actual data, if there is any
+    if (bufSize > 0) {
+        char* buffer = new char(bufSize);
+        MPI_Recv(&buffer, bufSize, MPI_UNSIGNED_CHAR, 
+            rank, MPI_TAG, MPI_COMM_WORLD, NULL);
+
+        // generate the output mat from the received data
+        deserializeMat(tile, buffer);
+    }
+
+    return bufSize;
+}
+
+void sendTile(cv::Mat& tile) {
+
+}
+
+int distExec(int argc, char* argv[], PriorityQ<rect_t>& rQueue, 
+        cv::Mat& inImg, cv::Mat& outImg) {
 
     int np, rank;
 
@@ -127,16 +154,27 @@ int distExec(int argc, char* argv[], PriorityQ<rect_t>& rQueue, cv::Mat& inImg, 
         // keep processing tiles while there are tiles
         // recvTile returns the tile size, returning 0 if the
         //   tile is empty, signaling that there are no more tiles
-        while (recvTile(curTile) > 0) {
+        int bufSize = 0;
+        while ((bufSize = recvTile(curTile, rank)) > 0) {
             // allocate halide buffers
-            Halide::Buffer<uint8_t> h_curTile = Halide::Buffer<uint8_t>(curTile.data, curTile.cols, curTile.rows);
-            Halide::Buffer<uint8_t> h_outTile = Halide::Buffer<uint8_t>(outTile.data, outTile.cols, outTile.rows);
+            Halide::Buffer<uint8_t> h_curTile = Halide::Buffer<uint8_t>(
+                curTile.data, curTile.cols, curTile.rows);
+            Halide::Buffer<uint8_t> h_outTile = Halide::Buffer<uint8_t>(
+                outTile.data, outTile.cols, outTile.rows);
 
             // execute blur 
             blurAOT(h_curTile, h_outTile);
             
-            // return executed tile
-            sendTile(outTile);
+            // serialize the output tile
+            char* buffer;
+            if (bufSize != serializeMat(outTile, buffer)) {
+                cout << "Output tile have a different size from the input one." << endl;
+                exit(1);
+            }
+
+            // send it back to the manager
+            MPI_Send(&buffer, bufSize, MPI_UNSIGNED_CHAR, 
+                rank, MPI_TAG, MPI_COMM_WORLD);
         }
         
     }
