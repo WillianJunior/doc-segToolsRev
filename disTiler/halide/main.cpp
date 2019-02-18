@@ -7,6 +7,8 @@
 #include <opencv2/highgui/highgui.hpp>
 
 #include "BlurJIT.h"
+#include "distTiling.h"
+#include "PriorityQ.h"
 
 // break input into bg and dense:
 //  get hotspots through threshold
@@ -82,23 +84,17 @@ int main(int argc, char const *argv[]) {
 
     cv::Mat output = cv::Mat::zeros(input.size(), input.type());
 
-    switch (paral) {
-        case p_serial:
-            BlurJIT blur(input, output);
-            blur.sched();
-            blur.run();
+    if (paral == p_serial) {
+        BlurJIT blur(input, output);
+        blur.sched();
+        blur.run();
+    } else if (paral == p_dist) {
+        // break tiles
+        PriorityQ<rect_t> rQueue;
 
-            break;
-        case p_dist:
-            // break tiles
-            list<tiles_t> tilesRects;
-
-            // perform distributed execution
-            distExec();
-            
-            
-
-    };
+        // perform distributed execution
+        distExec(rQueue, input, output);
+    }
 
     cv::imwrite("./input.png", input);
     cv::imwrite("./output.png", output);
