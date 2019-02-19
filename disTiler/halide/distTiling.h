@@ -21,6 +21,11 @@ typedef struct thr_args_t {
     PriorityQ<rect_t> *rQueue;
 } thr_args_t;
 
-int distExec(PriorityQ<rect_t> rQueue, cv::Mat& inImg, cv::Mat& outImg);
+int distExec(int argc, char* argv[], PriorityQ<rect_t>& rQueue, 
+        cv::Mat& inImg, cv::Mat& outImg);
+
+// blur pipeline, compiled on BlurAOT.cpp. Added here just to not create a
+//   new header of a single definition
+int blurAOT(Halide::Buffer<uint8_t>, Halide::Buffer<uint8_t>);
 
 #endif

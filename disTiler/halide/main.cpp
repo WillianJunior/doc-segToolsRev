@@ -48,14 +48,14 @@
 
 using namespace std;
 
-int find_arg_pos(string s, int argc, const char** argv) {
+int find_arg_pos(string s, int argc, char** argv) {
     for (int i=1; i<argc; i++)
         if (string(argv[i]).compare(s)==0)
             return i;
     return -1;
 }
 
-int main(int argc, char const *argv[]) {
+int main(int argc, char *argv[]) {
     
     if (argc < 2) {
         cout << "usage: tilerTest -d <N> -i <input image>" << endl;
@@ -93,7 +93,7 @@ int main(int argc, char const *argv[]) {
         PriorityQ<rect_t> rQueue;
 
         // perform distributed execution
-        distExec(rQueue, input, output);
+        distExec(argc, argv, rQueue, input, output);
     }
 
     cv::imwrite("./input.png", input);

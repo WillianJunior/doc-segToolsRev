@@ -11,4 +11,6 @@ public:
 	int pop(T& e);
 };
 
+#include "PriorityQ.tpp"
+
 #endif
