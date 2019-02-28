@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 2.8.9)
 project (disTiler-halide)
+add_definitions(-std=c++11)
 
 # add opencv
 find_package(OpenCV REQUIRED)
@@ -25,28 +26,16 @@ target_include_directories("${libblurjit}" PUBLIC .)
 target_link_libraries(${libblurjit} ${OpenCV_LIBS})
 
 # create blur aot lib
-# add_executable(genaot ${HALIDE_BUILD_PATH}/../tools/GenGen.cpp BlurAOT.cpp)
-set(genaot genaot)
-set(genaotrcs BlurAOT.cpp ${HALIDE_BUILD_PATH}/../tools/GenGen.cpp)
-add_library("${genaot}" STATIC ${genaotrcs})
-target_include_directories("${genaot}" PUBLIC .)
-target_compile_options(genaot PRIVATE -std=c++11)
-target_compile_options(genaot PRIVATE -fno-rtti)
-target_link_libraries(genaot Halide)
-
-# # generate halide aot code and copy it to the current build dir
-# add_custom_command(TARGET genaot 
-# 	POST_BUILD
-# 	COMMAND ./genaot
-# 	WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-# 	VERBATIM
-# )
-
-	# ${CMAKE_CURRENT_SOURCE_DIR}/run.sh ${CMAKE_CURRENT_BINARY_DIR})
-# add_dependencies(disTiler cpyRunDTH)
-
-
-
+add_executable(libblur ${HALIDE_BUILD_PATH}/../tools/GenGen.cpp BlurAOT.cpp)
+# set(libblur libblur)
+# set(libblurrcs BlurAOT.cpp ${HALIDE_BUILD_PATH}/../tools/GenGen.cpp)
+# add_library("${libblur}" STATIC ${libblurrcs})
+# target_include_directories("${libblur}" PUBLIC .)
+set_target_properties(libblur PROPERTIES LINKER_LANGUAGE CXX)
+set_target_properties(libblur PROPERTIES ENABLE_EXPORTS ON)
+# target_compile_options(libblur PRIVATE -std=c++11)
+target_compile_options(libblur PRIVATE -fno-rtti)
+target_link_libraries(libblur Halide)
 
 # create priority queue lib
 set(libpq libpq)
@@ -66,19 +55,18 @@ target_link_libraries(${libdistiler} ${CMAKE_THREAD_LIBS_INIT})
 target_link_libraries(${libdistiler} ${OpenCV_LIBS})
 target_link_libraries(${libdistiler} ${MPI_CXX_LIBRARIES})
 target_link_libraries(${libdistiler} Halide)
-target_link_libraries(${libdistiler} genaot)
+target_link_libraries(${libdistiler} libblur)
 target_link_libraries(${libdistiler} libpq)
 
 # create main executable
-add_definitions(-std=c++11)
 add_executable(disTiler main.cpp)
-target_compile_options(disTiler PRIVATE -pthread)
-target_link_libraries (disTiler ${CMAKE_THREAD_LIBS_INIT})
+target_compile_options(disTiler PRIVATE -std=c++11)
+# target_compile_options(disTiler PRIVATE -pthread)
+# target_link_libraries (disTiler ${CMAKE_THREAD_LIBS_INIT})
 # set_target_properties(disTiler PROPERTIES LINKER_LANGUAGE CXX)
-# target_compile_options(disTiler PRIVATE -std=c++11)
 # target_compile_options(disTiler PRIVATE -DUSE_SYSTEM_HDF5=OFF)
 target_link_libraries(disTiler ${OpenCV_LIBS})
-target_link_libraries(disTiler ${MPI_C_LIBRARIES})
+target_link_libraries(disTiler ${MPI_CXX_LIBRARIES})
 target_link_libraries(disTiler Halide)
 target_link_libraries(disTiler libblurjit)
 target_link_libraries(disTiler libdistiler)
