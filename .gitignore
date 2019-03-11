@@ -33,6 +33,7 @@
 
 # images
 *.tiff
+*.png
 
 # cmake related
 build

@@ -15,9 +15,7 @@ public:
         Halide::Func blurx;
         Halide::Func clamped;
         
-        // name halide functions
-        output = Halide::Func("output(blur-y)");
-        blurx = Halide::Func("blur-x");
+        // name halide variables
         x = Halide::Var("x");
         y = Halide::Var("y");
 
@@ -25,6 +23,7 @@ public:
 
         blurx(x,y) = (clamped(x-1,y) + clamped(x,y) + clamped(x+1,y))/3;
         output(x,y) = Halide::cast<uint8_t>((blurx(x,y-1) + blurx(x,y) + blurx(x,y+1))/3);
+        // output(x,y) = input(x,y);
     }
 };
 HALIDE_REGISTER_GENERATOR(BlurAOTGen, blurAOT)

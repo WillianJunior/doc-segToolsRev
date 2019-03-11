@@ -19,57 +19,66 @@ include_directories(${HALIDE_BUILD_PATH}/include)
 link_directories(${HALIDE_BUILD_PATH}/lib)
 
 # create blur jit lib
-set(libblurjit libblurjit)
-set(libblurjitsrcs BlurJIT.cpp)
-add_library("${libblurjit}" STATIC ${libblurjitsrcs})
-target_include_directories("${libblurjit}" PUBLIC .)
-target_link_libraries(${libblurjit} ${OpenCV_LIBS})
+set(blurjit blurjit)
+set(blurjitsrcs BlurJIT.cpp)
+add_library("${blurjit}" STATIC ${blurjitsrcs})
+target_include_directories("${blurjit}" PUBLIC .)
+target_link_libraries(${blurjit} ${OpenCV_LIBS})
 
-# create blur aot lib
+# create blur aot generator executable
 add_executable(libblur ${HALIDE_BUILD_PATH}/../tools/GenGen.cpp BlurAOT.cpp)
-# set(libblur libblur)
-# set(libblurrcs BlurAOT.cpp ${HALIDE_BUILD_PATH}/../tools/GenGen.cpp)
-# add_library("${libblur}" STATIC ${libblurrcs})
-# target_include_directories("${libblur}" PUBLIC .)
 set_target_properties(libblur PROPERTIES LINKER_LANGUAGE CXX)
 set_target_properties(libblur PROPERTIES ENABLE_EXPORTS ON)
-# target_compile_options(libblur PRIVATE -std=c++11)
 target_compile_options(libblur PRIVATE -fno-rtti)
+target_compile_options(libblur PRIVATE -pthread)
 target_link_libraries(libblur Halide)
 
+# make target to generate bluraot lib and clean it
+add_custom_target(
+    genbluraot
+    COMMAND ./libblur -g blurAOT -o . target=host)
+set_property(DIRECTORY PROPERTY ADDITIONAL_MAKE_CLEAN_FILES
+   "${CMAKE_CURRENT_BINARY_DIR}/blurAOT.a"
+   "${CMAKE_CURRENT_BINARY_DIR}/blurAOT.h")
+
+
+add_library(libbluraot STATIC IMPORTED)
+set_target_properties(libbluraot PROPERTIES 
+	IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/blurAOT.a)
+
 # create priority queue lib
-set(libpq libpq)
-set(libpqsrcs PriorityQ.h)
-add_library("${libpq}" STATIC ${libpqsrcs})
-set_target_properties(libpq PROPERTIES LINKER_LANGUAGE CXX)
-target_include_directories("${libpq}" PUBLIC .)
-target_link_libraries(${libpq} ${OpenCV_LIBS})
+set(priorityq priorityq)
+set(priorityqsrcs PriorityQ.h)
+add_library("${priorityq}" STATIC ${priorityqsrcs})
+set_target_properties(priorityq PROPERTIES LINKER_LANGUAGE CXX)
+target_include_directories("${priorityq}" PUBLIC .)
+target_link_libraries(${priorityq} ${OpenCV_LIBS})
 
 # create distTiling lib
-set(libdistiler libdistiler)
-set(libdistilersrcs distTiling.cpp)
-add_library("${libdistiler}" STATIC ${libdistilersrcs})
-target_include_directories("${libdistiler}" PUBLIC .)
-target_compile_options(libdistiler PRIVATE -pthread)
-target_link_libraries(${libdistiler} ${CMAKE_THREAD_LIBS_INIT})
-target_link_libraries(${libdistiler} ${OpenCV_LIBS})
-target_link_libraries(${libdistiler} ${MPI_CXX_LIBRARIES})
-target_link_libraries(${libdistiler} Halide)
-target_link_libraries(${libdistiler} libblur)
-target_link_libraries(${libdistiler} libpq)
+set(distiler distiler)
+set(distilersrcs distTiling.cpp)
+add_library("${distiler}" STATIC ${distilersrcs})
+set_target_properties(distiler PROPERTIES LINKER_LANGUAGE CXX)
+target_compile_options(distiler PRIVATE -pthread)
+target_compile_options(distiler PRIVATE 
+	-include "${CMAKE_CURRENT_BINARY_DIR}/blurAOT.h")
+add_dependencies(distiler genbluraot)
+target_include_directories("${distiler}" PUBLIC .)
+target_link_libraries(distiler ${CMAKE_THREAD_LIBS_INIT})
+target_link_libraries(distiler ${OpenCV_LIBS})
+target_link_libraries(distiler ${MPI_CXX_LIBRARIES})
+target_link_libraries(distiler Halide)
+target_link_libraries(distiler libbluraot -ldl)
+target_link_libraries(distiler priorityq)
 
 # create main executable
 add_executable(disTiler main.cpp)
 target_compile_options(disTiler PRIVATE -std=c++11)
-# target_compile_options(disTiler PRIVATE -pthread)
-# target_link_libraries (disTiler ${CMAKE_THREAD_LIBS_INIT})
-# set_target_properties(disTiler PROPERTIES LINKER_LANGUAGE CXX)
-# target_compile_options(disTiler PRIVATE -DUSE_SYSTEM_HDF5=OFF)
 target_link_libraries(disTiler ${OpenCV_LIBS})
 target_link_libraries(disTiler ${MPI_CXX_LIBRARIES})
 target_link_libraries(disTiler Halide)
-target_link_libraries(disTiler libblurjit)
-target_link_libraries(disTiler libdistiler)
+target_link_libraries(disTiler blurjit)
+target_link_libraries(disTiler distiler)
 
 #Copy the test images to the build folder
 if(CPY_BASE_SEG_IMG)
@@ -83,15 +92,3 @@ if(CPY_BASE_SEG_IMG)
 		${CMAKE_CURRENT_SOURCE_DIR}/run.sh ${CMAKE_CURRENT_BINARY_DIR})
 	add_dependencies(disTiler cpyRunDTH)
 endif(CPY_BASE_SEG_IMG)
-
-# # run command to make testing easy
-# set(IN in.tiff)
-# add_custom_command(TARGET disTiler
-# 	POST_BUILD
-# 	COMMAND ./disTiler -i $IN -d 0
-# 	COMMAND xdg-open $IN 
-# 	COMMAND xdg-open output.png 
-# 	WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-# 	VERBATIM
-# )
-

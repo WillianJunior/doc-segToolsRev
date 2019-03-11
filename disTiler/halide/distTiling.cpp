@@ -157,9 +157,11 @@ int distExec(int argc, char* argv[], PriorityQ<rect_t>& rQueue,
         int bufSize = 0;
         while ((bufSize = recvTile(curTile, rank)) > 0) {
             // allocate halide buffers
-            Halide::Buffer<uint8_t> h_curTile = Halide::Buffer<uint8_t>(
+            Halide::Runtime::Buffer<uint8_t> h_curTile = 
+                Halide::Runtime::Buffer<uint8_t>(
                 curTile.data, curTile.cols, curTile.rows);
-            Halide::Buffer<uint8_t> h_outTile = Halide::Buffer<uint8_t>(
+            Halide::Runtime::Buffer<uint8_t> h_outTile = 
+                Halide::Runtime::Buffer<uint8_t>(
                 outTile.data, outTile.cols, outTile.rows);
 
             // execute blur 
