@@ -9,25 +9,8 @@
 #include "BlurJIT.h"
 #include "distTiling.h"
 #include "PriorityQ.h"
+#include "autoTiler.h"
 
-// break input into bg and dense:
-//  get hotspots through threshold
-//      * can use user-defined functions
-//      dilate
-//  crop dense into rectangles
-//  make bg rectangles
-//      * merge bg's if merged is rectangular (this is done to reduce borders count)
-// break dense list to reach 2*np dense tiles:
-//  each dense is an initial 1 node kd-tree
-//  make priority queue on the leaf nodes of all kd-trees ordered by cost
-//      * use smart queue structures (fibonacci tree?)
-//  until number of leaf nodes < 2*np:
-//      split leaf node with highest cost
-//      add new leaf nodes
-//      re-sort queue
-// make borders list:
-//  for each rectangle r in bg and dense
-//      insert 4 borders on a map
 // distributed execution:
 //  for each dense
 //      send and execute
@@ -90,7 +73,9 @@ int main(int argc, char *argv[]) {
         blur.run();
     } else if (paral == p_dist) {
         // break tiles
-        PriorityQ<rect_t> rQueue;
+        // PriorityQ<rect_t> rQueue = autoTiler(input);
+        std::list<rect_t> rQueue = autoTiler(input);
+        // std::list<rect_t> rQueue = autoTiler(input, 10, 50, 10);
 
         // perform distributed execution
         distExec(argc, argv, rQueue, input, output);

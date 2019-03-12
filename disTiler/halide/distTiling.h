@@ -8,9 +8,6 @@
 
 #include "PriorityQ.h"
 
-// generated pipeline code from halide
-// #include "blurAOT.h"
-
 #define MPI_TAG 0
 
 typedef struct rect_t {
@@ -21,10 +18,10 @@ typedef struct rect_t {
 typedef struct thr_args_t {
 	int currentRank;
     cv::Mat *input;
-    PriorityQ<rect_t> *rQueue;
+    std::list<rect_t> *rQueue;
 } thr_args_t;
 
-int distExec(int argc, char* argv[], PriorityQ<rect_t>& rQueue, 
+int distExec(int argc, char* argv[], std::list<rect_t>& rQueue, 
         cv::Mat& inImg, cv::Mat& outImg);
 
 #endif

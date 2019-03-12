@@ -45,14 +45,24 @@ void deserializeMat(cv::Mat& m, char* buffer) {
     m = cv::Mat(rows, cols, type, &buffer[4*sizeof(int)]);
 }
 
+template <typename T>
+int pop(const std::list<T>* l, T& out) {
+    if (l->size() == 0)
+        return 0;
+    else {
+        out = *(l->begin());
+        return 1;
+    }
+}
+
 void* sendRecvThread(void *args) {
     rect_t r;
     int currentRank = ((thr_args_t*)args)->currentRank;
     cv::Mat* input = ((thr_args_t*)args)->input;
-    PriorityQ<rect_t>* rQueue = ((thr_args_t*)args)->rQueue;
+    std::list<rect_t>* rQueue = ((thr_args_t*)args)->rQueue;
 
     // keep getting new rect's from the queue
-    while (rQueue->pop(r) != 0) {
+    while (pop(rQueue, r) != 0) {
         // generate a submat from the rect's queue
         cv::Mat subm = input->colRange(r.yi, r.yo-r.yi).rowRange(r.xi, r.xo-r.xi);
         
@@ -113,7 +123,7 @@ void sendTile(cv::Mat& tile) {
 
 }
 
-int distExec(int argc, char* argv[], PriorityQ<rect_t>& rQueue, 
+int distExec(int argc, char* argv[], std::list<rect_t>& rQueue, 
         cv::Mat& inImg, cv::Mat& outImg) {
 
     int np, rank;
@@ -132,7 +142,7 @@ int distExec(int argc, char* argv[], PriorityQ<rect_t>& rQueue,
 
     // node 0 is the manager
     if (rank == 0) {
-        // create a send/recv thread for each 
+        // create a send/recv thread for each worker
         pthread_t threadsId[np-1];
         for (int p=1; p<=np; p++) {
             thr_args_t* args = new thr_args_t();

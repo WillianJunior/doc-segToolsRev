@@ -71,6 +71,14 @@ target_link_libraries(distiler Halide)
 target_link_libraries(distiler libbluraot -ldl)
 target_link_libraries(distiler priorityq)
 
+# create auto tiler lib
+set(autotiler autotiler)
+set(autotilersrcs autoTiler.cpp)
+add_library("${autotiler}" STATIC ${autotilersrcs})
+set_target_properties(autotiler PROPERTIES LINKER_LANGUAGE CXX)
+target_include_directories("${autotiler}" PUBLIC .)
+target_link_libraries(${autotiler} ${OpenCV_LIBS})
+
 # create main executable
 add_executable(disTiler main.cpp)
 target_compile_options(disTiler PRIVATE -std=c++11)
@@ -79,6 +87,7 @@ target_link_libraries(disTiler ${MPI_CXX_LIBRARIES})
 target_link_libraries(disTiler Halide)
 target_link_libraries(disTiler blurjit)
 target_link_libraries(disTiler distiler)
+target_link_libraries(disTiler autotiler)
 
 #Copy the test images to the build folder
 if(CPY_BASE_SEG_IMG)
