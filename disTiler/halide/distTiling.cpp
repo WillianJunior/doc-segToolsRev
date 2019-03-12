@@ -39,7 +39,7 @@ void deserializeMat(cv::Mat& m, char* buffer) {
     memcpy((char*)&rows, &buffer[0*sizeof(int)], sizeof(int));
     memcpy((char*)&cols, &buffer[1*sizeof(int)], sizeof(int));
     memcpy((char*)&type, &buffer[2*sizeof(int)], sizeof(int));
-    memcpy((char*)&channels, &buffer[3*sizeof(int)], sizeof(int)); // NOT USING YET?
+    memcpy((char*)&channels, &buffer[3*sizeof(int)], sizeof(int));//NOT USING YET?
 
     // create the new mat with the basic fields and the actual data
     m = cv::Mat(rows, cols, type, &buffer[4*sizeof(int)]);
@@ -123,8 +123,7 @@ void sendTile(cv::Mat& tile) {
 
 }
 
-int distExec(int argc, char* argv[], std::list<rect_t>& rQueue, 
-        cv::Mat& inImg, cv::Mat& outImg) {
+int distExec(int argc, char* argv[], cv::Mat& inImg, cv::Mat& outImg) {
 
     int np, rank;
 
@@ -142,6 +141,12 @@ int distExec(int argc, char* argv[], std::list<rect_t>& rQueue,
 
     // node 0 is the manager
     if (rank == 0) {
+
+        std::list<rect_t> rQueue = autoTiler(inImg);
+
+        std::cout << "starting manager with " 
+            << rQueue.size() << " tiles" << std::endl;
+
         // create a send/recv thread for each worker
         pthread_t threadsId[np-1];
         for (int p=1; p<=np; p++) {
@@ -180,7 +185,8 @@ int distExec(int argc, char* argv[], std::list<rect_t>& rQueue,
             // serialize the output tile
             char* buffer;
             if (bufSize != serializeMat(outTile, buffer)) {
-                cout << "Output tile have a different size from the input one." << endl;
+                std::cout << "Output tile have a different size" << 
+                    " from the input one." << std::endl;
                 exit(1);
             }
 

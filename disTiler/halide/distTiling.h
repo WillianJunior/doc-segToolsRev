@@ -21,7 +21,8 @@ typedef struct thr_args_t {
     std::list<rect_t> *rQueue;
 } thr_args_t;
 
-int distExec(int argc, char* argv[], std::list<rect_t>& rQueue, 
-        cv::Mat& inImg, cv::Mat& outImg);
+int distExec(int argc, char* argv[], cv::Mat& inImg, cv::Mat& outImg);
+
+#include "autoTiler.h" // here to solve circular dependency problem
 
 #endif

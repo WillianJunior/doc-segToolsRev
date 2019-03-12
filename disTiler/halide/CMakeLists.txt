@@ -13,6 +13,14 @@ include_directories(SYSTEM ${MPI_INCLUDE_PATH})
 # add pthreads
 find_package (Threads REQUIRED)
 
+# add openmp
+find_package(OpenMP REQUIRED)
+if (OPENMP_FOUND)
+    set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+    set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
+endif()
+
 # add halide
 find_path(HALIDE_BUILD_PATH REQUIRED)
 include_directories(${HALIDE_BUILD_PATH}/include)
@@ -76,6 +84,7 @@ set(autotiler autotiler)
 set(autotilersrcs autoTiler.cpp)
 add_library("${autotiler}" STATIC ${autotilersrcs})
 set_target_properties(autotiler PROPERTIES LINKER_LANGUAGE CXX)
+target_compile_options(autotiler PRIVATE -lopenmp)
 target_include_directories("${autotiler}" PUBLIC .)
 target_link_libraries(${autotiler} ${OpenCV_LIBS})
 

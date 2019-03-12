@@ -74,11 +74,11 @@ int main(int argc, char *argv[]) {
     } else if (paral == p_dist) {
         // break tiles
         // PriorityQ<rect_t> rQueue = autoTiler(input);
-        std::list<rect_t> rQueue = autoTiler(input);
+        // std::list<rect_t> rQueue = autoTiler(input);
         // std::list<rect_t> rQueue = autoTiler(input, 10, 50, 10);
 
         // perform distributed execution
-        distExec(argc, argv, rQueue, input, output);
+        distExec(argc, argv, input, output);
     }
 
     cv::imwrite("./input.png", input);
