@@ -46,6 +46,31 @@ bool operator<(const rect_t& a, const rect_t& b) {return a.xi < b.xi;}
 //     return a.xi == b.xi && a.xo == b.xo && a.yi == b.yi && a.yo == b.yo;
 // }
 
+void extractDense(int maxLabel, const cv::Mat& mask, rect_t* denseArr) {
+    #pragma omp parallel for // toooo slow to have it not in parallel
+    for (int l=1; l<(int)maxLabel; l++) { // l starts at 1 since 0 is background
+        cv::Mat subMask = cv::Mat::zeros(mask.size(), mask.type());
+        cv::Mat subMaskTmp = cv::Mat::zeros(mask.size(), mask.type());
+
+        std::cout << "finding submask points of label " << l << std::endl;
+        // subMaskTmp = mask - l
+        cv::subtract(mask, cv::Scalar(l), subMaskTmp);
+        // subMask(I) = 255 if subMaskTmp(I) != 0
+        subMaskTmp = cv::abs(subMaskTmp);
+        subMaskTmp.convertTo(subMaskTmp, CV_8U);
+        cv::add(subMask, cv::Scalar(CV_MAX_PIX_VAL), subMask, subMaskTmp);
+        // subMask = 255 - subMask
+        cv::subtract(cv::Scalar(CV_MAX_PIX_VAL), subMask, subMask);
+        
+        // create a minimum rectangle area of all pixels of the submask
+        // std::cout << "getting max rectangle" << std::endl;
+        subMask.convertTo(subMask, CV_8U);
+        cv::Rect r = cv::boundingRect(subMask);
+        rect_t rr = {.xi=r.x, .yi=r.y, .xo=r.x+r.width, .yo=r.y+r.height};
+        denseArr[l-1] = rr;
+    }
+}
+
 // yi = oldY
 // yo = min(r,cur)
 // xo = width
@@ -62,6 +87,156 @@ void newBlocks(std::list<rect_t>& out, std::multiset<rect_t> cur,
     // add last
     rect_t newR = {xi, yi, xo, yo};
     out.push_back(newR);
+}
+
+void generateBackground(std::list<rect_t>& dense, std::list<rect_t>& output) {
+
+    std::cout << "generating bg regions" << std::endl;
+    int oldY = 0;
+    std::multiset<rect_t> cur;
+    while (!cur.empty() || !dense.empty()) {
+        // std::cout << "|<dense,cur>| = " << dense.size() << ", " 
+        //     << cur.size() << std::endl;
+        
+        // get the heads of both lists
+        rect_t r;
+        if (!dense.empty())
+            r = *(dense.begin());
+
+        // std::cout << "dense|cur: (<" << r.xi << "," << r.yi << ">,<" 
+        //         << r.xo << "," << r.yo << ">)" << std::endl;
+        // if (!cur.empty() && !dense.empty()) {
+        //     rect_t c = *(cur.begin());
+        //     std::cout << "dense|cur: (<" << r.xi << "," << r.yi << ">,<" 
+        //         << r.xo << "," << r.yo << ">) | (<" << c.xi << "," << c.yi 
+        //         << ">,<" << c.xo << "," << c.yo << ">)" << std::endl;
+        //     if (r.xi == 3337 && r.yi == 192) {
+        //         int cc;
+        //         std::cin >> cc;
+        //     }
+        // }
+
+        // check if the current y is from the beginning of the end of a rect
+        // two comparisons are necessary since there may be a beginning with
+        // an end on the same coordinate
+        if (cur.empty() || (!dense.empty() && r.yi <= cur.begin()->yo)) {
+            // make the new rect blocks
+            // newBlocks(output, cur, oldY, r.yi, input.cols);
+            cur.insert(r);
+            dense.erase(dense.begin());
+        }
+        if (dense.empty() || (!cur.empty() && r.yi >= cur.begin()->yo)) {
+            // make the new rect blocks
+            // newBlocks(output, cur, oldY, cur.begin()->yo, input.cols);
+            cur.erase(cur.begin());
+        }
+    }
+}
+
+inline bool isInside(int x, int y, rect_t r2) {
+    return r2.xi <= x && r2.yi <= y && r2.xo >= x && r2.yo >= y;
+}
+
+inline bool isInside(rect_t r1, rect_t r2) {
+    return isInside(r1.xi, r1.yi, r2) && isInside(r1.xo, r1.yo, r2);
+}
+
+void removeInsideOvlp(std::list<rect_t>& output) {
+    // first create an array for parallelization
+    int outS = output.size();
+    rect_t outArray[outS];
+    std::copy(output.begin(), output.end(), outArray);
+
+    // create an array of tags for non repeated regions
+    bool outArrayNR[outS];
+    for (int i=0; i<outS; i++) {outArrayNR[i] = false;}
+
+    // compare each element with each other, checking if it's inside any
+    #pragma omp parallel for
+    for (int i=0; i<outS; i++) {
+        int j;
+        for (j=0; j<outS; j++) {
+            if (isInside(outArray[i], outArray[j]) && i!=j)
+                break;
+        }
+        // check if no other bigger region was found
+        if (j == outS) {
+            outArrayNR[i] = true;
+        }
+    }
+
+    // clear the old elements and add only the unique regions
+    output.clear();
+    for (int i=0; i<outS; i++) {
+        if (outArrayNR[i])
+            output.push_back(outArray[i]);
+    }
+}
+
+inline bool hOvlp(rect_t big, rect_t small) {
+    return big.yi <= small.yi && big.yo >= small.yo 
+        && ((big.xi < small.xi && big.xo > small.xi)
+        || (big.xi < small.xo && big.xo > small.xo));
+}
+
+inline bool vOvlp(rect_t big, rect_t small) {
+    return big.xi <= small.xi && big.xo >= small.xo 
+        && ((big.yi < small.yi && big.yo > small.yi)
+        || (big.yi < small.yo && big.yo > small.yo));
+}
+
+void removeSideOvlp(std::list<rect_t>& output) {
+    // first create an array for parallelization
+    int outS = output.size();
+    rect_t outArray[outS];
+    std::copy(output.begin(), output.end(), outArray);
+
+    // compare each element with each other, checking if it's inside any
+    #pragma omp parallel for
+    for (int i=0; i<outS; i++) {
+        int j;
+        int big, small;
+        for (j=0; j<outS; j++) {
+            // check if there is a horizontal overlapping
+            if (hOvlp(outArray[i], outArray[j]) 
+                || hOvlp(outArray[i], outArray[j])) {
+
+                // find which is the big one
+                big = i; small = j;
+                if (outArray[i].yi > outArray[j].yi) {
+                    big = j; small = i;
+                }
+
+                // remove the overlapping of small with big
+                if (outArray[small].xi > outArray[big].xi) // big left
+                    outArray[small].xi = outArray[big].xo;
+                else // big on the right
+                    outArray[small].xo = outArray[big].xi;
+            }
+            // check if there is a vertical overlapping
+            if (vOvlp(outArray[i], outArray[j]) 
+                || vOvlp(outArray[i], outArray[j])) {
+
+                // find which is the big one
+                big = i; small = j;
+                if (outArray[i].xi > outArray[j].xi) {
+                    big = j; small = i;
+                }
+
+                // remove the overlapping of small with big
+                if (outArray[small].yi > outArray[big].yi) // big up
+                    outArray[small].yi = outArray[big].yo;
+                else // big is the down region
+                    outArray[small].yo = outArray[big].yi;
+            }
+        }
+    }
+
+    // clear the old elements and add only the unique regions
+    output.clear();
+    for (int i=0; i<outS; i++) {
+        output.push_back(outArray[i]);
+    }
 }
 
 std::list<rect_t> autoTiler(cv::Mat& input, int border, 
@@ -93,28 +268,7 @@ std::list<rect_t> autoTiler(cv::Mat& input, int border,
     std::cout << "labels: " << maxLabel << std::endl;
     
     rect_t denseArr[(int)maxLabel]; // i.e. a thread safe list
-    #pragma omp parallel for // toooo slow to have it not in parallel
-    for (int l=1; l<(int)maxLabel; l++) { // l starts at 1 since 0 is background
-        cv::Mat subMask = cv::Mat::zeros(mask.size(), mask.type());
-        cv::Mat subMaskTmp = cv::Mat::zeros(mask.size(), mask.type());
-
-        std::cout << "finding submask points of label " << l << std::endl;
-        // subMaskTmp = mask - l
-        cv::subtract(mask, cv::Scalar(l), subMaskTmp);
-        // subMask(I) = 255 if subMaskTmp(I) != 0
-        subMaskTmp = cv::abs(subMaskTmp);
-        subMaskTmp.convertTo(subMaskTmp, CV_8U);
-        cv::add(subMask, cv::Scalar(CV_MAX_PIX_VAL), subMask, subMaskTmp);
-        // subMask = 255 - subMask
-        cv::subtract(cv::Scalar(CV_MAX_PIX_VAL), subMask, subMask);
-        
-        // create a minimum rectangle area of all pixels of the submask
-        // std::cout << "getting max rectangle" << std::endl;
-        subMask.convertTo(subMask, CV_8U);
-        cv::Rect r = cv::boundingRect(subMask);
-        rect_t rr = {.xi=r.x, .yi=r.y, .xo=r.x+r.width, .yo=r.y+r.height};
-        denseArr[l] = rr;
-    }
+    extractDense(maxLabel, mask, denseArr);
 
     // generate the lists from the dense array
     std::list<rect_t> dense;
@@ -127,33 +281,13 @@ std::list<rect_t> autoTiler(cv::Mat& input, int border,
     dense.sort([](const rect_t& a, const rect_t& b) { return a.yi < b.yi;});
 
     // generate the background regions
-    std::cout << "generating bg regions" << std::endl;
-    int oldY = 0;
-    std::multiset<rect_t> cur;
-    while (!cur.empty() || !dense.empty()) {
-        std::cout << "|<dense,cur>| = " << dense.size() << ", " 
-            << cur.size() << std::endl;
-        
-        // get the heads of both lists
-        rect_t r;
-        if (!dense.empty())
-            r = *(dense.begin());
+    generateBackground(dense, output);
+    
+    // remove regions that are overlapping within another bigger region
+    removeInsideOvlp(output);
 
-        // check if the current y is from the beginning of the end of a rect
-        // two comparisons are necessary since there may be a beginning with
-        // an end on the same coordinate
-        if (cur.empty() || (!dense.empty() && r.yi < cur.begin()->yo)) {
-            // make the new rect blocks
-            // newBlocks(output, cur, oldY, r.yi, input.cols);
-            cur.insert(r);
-            dense.erase(dense.begin());
-        }
-        if (dense.empty() || (!cur.empty() && r.yi > cur.begin()->yo)) {
-            // make the new rect blocks
-            // newBlocks(output, cur, oldY, cur.begin()->yo, input.cols);
-            cur.erase(cur.begin());
-        }
-    }
+    // remove the overlap of two regions, side by side (vert and horz)
+    removeSideOvlp(output);
 
     // add a border to all rect regions
     std::cout << output.size() << " regions to process" << std::endl;
