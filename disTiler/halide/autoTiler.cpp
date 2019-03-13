@@ -132,9 +132,8 @@ void removeSideOvlp(std::list<rect_t>& output) {
     // compare each element with each other, checking if it's inside any
     #pragma omp parallel for
     for (int i=0; i<outS; i++) {
-        int j;
         int big, small;
-        for (j=0; j<outS; j++) {
+        for (int j=0; j<outS; j++) {
             // check if there is a horizontal overlapping
             if (hOvlp(outArray[i], outArray[j]) 
                 || hOvlp(outArray[i], outArray[j])) {
@@ -181,19 +180,22 @@ inline int area (rect_t r) {
     return (r.xo-r.xi) * (r.yo-r.yi);
 }
 
-void removeDiagOvlp(std::list<rect_t>& output) {
+void removeDiagOvlp(std::list<rect_t>& ovlpCand, std::list<rect_t>& nonMod) {
     // first create an array for parallelization
-    int outS = output.size();
+    int outS = ovlpCand.size();
     rect_t outArray[outS];
-    std::copy(output.begin(), output.end(), outArray);
+    std::copy(ovlpCand.begin(), ovlpCand.end(), outArray);
 
     // array for the replaced 3 new blocks for every initial block
     rect_t outRepArray[outS][3];
 
     // marker array for showing which blocks were to be replaced
-    bool outRepArrayB[outS];
-    for (int i=0; i<outS; i++)
-        outRepArrayB[i] = false;
+    bool outRepArrayR[outS];
+    bool outRepArrayS[outS];
+    for (int i=0; i<outS; i++) {
+        outRepArrayR[i] = false;
+        outRepArrayS[i] = false;
+    }
 
     // compare each element with each other, checking if it's inside any
     #pragma omp parallel for
@@ -202,33 +204,48 @@ void removeDiagOvlp(std::list<rect_t>& output) {
             rect_t b = outArray[i];
             rect_t s = outArray[j];
 
-            // only break down if <i> is the big block of a diagonal overlap
-            if (area(outArray[i]) < area(outArray[j])) {
-                continue;
-            }
-
             // break the big block if there is a diagonal overlap
             if (b.xi > s.xi && b.xi < s.xo && b.yo > s.yi && b.yo < s.yo) {
                 // big on upper right diagonal
-                outRepArrayB[i] = true;
+                // only break down if <i> is the big block of a diagonal overlap
+                if (area(outArray[i]) < area(outArray[j])) {
+                    outRepArrayS[i] = true;
+                    continue;
+                }
+                outRepArrayR[i] = true;
                 outRepArray[i][0] = {b.xi, b.yi, s.xo, s.yi};
                 outRepArray[i][1] = {s.xo, b.yi, b.xo, s.yi};
                 outRepArray[i][2] = {s.xo, s.yi, b.xo, b.yo};
             } else if (b.xo > s.xi && b.xo < s.xo && b.yo > s.yi && b.yo < s.yo) {
                 // big on upper left
-                outRepArrayB[i] = true;
+                // only break down if <i> is the big block of a diagonal overlap
+                if (area(outArray[i]) < area(outArray[j])) {
+                    outRepArrayS[i] = true;
+                    continue;
+                }
+                outRepArrayR[i] = true;
                 outRepArray[i][0] = {b.xi, b.yi, s.xi, s.yi};
                 outRepArray[i][1] = {s.xi, b.yi, b.xo, s.yi};
                 outRepArray[i][2] = {b.xi, s.yi, s.xi, b.yo};
             } else if (b.xi > s.xi && b.xi < s.xo && b.yi > s.yi && b.yi < s.yo) {
                 // big on bottom right
-                outRepArrayB[i] = true;
+                // only break down if <i> is the big block of a diagonal overlap
+                if (area(outArray[i]) < area(outArray[j])) {
+                    outRepArrayS[i] = true;
+                    continue;
+                }
+                outRepArrayR[i] = true;
                 outRepArray[i][0] = {s.xo, b.yi, b.xo, s.yo};
                 outRepArray[i][1] = {b.xi, s.yo, s.xo, b.yo};
                 outRepArray[i][2] = {s.xo, s.yo, b.xo, b.yo};
             } else if (b.xo > s.xi && b.xo < s.xo && b.yi > s.yi && b.yi < s.yo) {
                 // big on bottom left
-                outRepArrayB[i] = true;
+                // only break down if <i> is the big block of a diagonal overlap
+                if (area(outArray[i]) < area(outArray[j])) {
+                    outRepArrayS[i] = true;
+                    continue;
+                }
+                outRepArrayR[i] = true;
                 outRepArray[i][0] = {b.xi, b.yi, s.xi, s.yo};
                 outRepArray[i][1] = {s.xi, s.yo, b.xo, b.yo};
                 outRepArray[i][2] = {b.xi, s.yo, s.xi, b.yo};
@@ -237,14 +254,16 @@ void removeDiagOvlp(std::list<rect_t>& output) {
     }
 
     // clear the old elements and add only the unique regions
-    output.clear();
+    ovlpCand.clear();
     for (int i=0; i<outS; i++) {
-        if (outRepArrayB[i]) {
-            output.push_back(outRepArray[i][0]);
-            output.push_back(outRepArray[i][1]);
-            output.push_back(outRepArray[i][2]);
-        } else
-            output.push_back(outArray[i]);
+        if (outRepArrayR[i]) {
+            ovlpCand.push_back(outRepArray[i][0]);
+            ovlpCand.push_back(outRepArray[i][1]);
+            ovlpCand.push_back(outRepArray[i][2]);
+        } else if (outRepArrayS[i])
+            ovlpCand.push_back(outArray[i]);
+        else
+            nonMod.push_back(outArray[i]);
 
     }
 }
@@ -326,14 +345,12 @@ std::list<rect_t> autoTiler(cv::Mat& input, int border,
         cv::Size(2*erosionSize + 1, 2*erosionSize+1));
     cv::dilate(mask, mask, element);
 
-    // cv::imwrite("./mask2.png", mask); // OK
-
-    // extract rectangular regions from mask
+    // merge regions of interest together and mark them separately
     cv::connectedComponents(mask, mask);
-    cv::Mat cm = mask.clone();
-    cm.convertTo(cm, CV_8U);
-    cv::applyColorMap(cm, cm, cv::COLORMAP_JET);
-    cv::imwrite("./mask3.png", cm);
+    // cv::Mat cm = mask.clone();
+    // cm.convertTo(cm, CV_8U);
+    // cv::applyColorMap(cm, cm, cl::COLORMAP_JET);
+    // cv::imwrite("./mask3.png", cm);
 
     double maxLabel;
     cv::minMaxLoc(mask, NULL, &maxLabel);
@@ -344,24 +361,25 @@ std::list<rect_t> autoTiler(cv::Mat& input, int border,
     extractDense(maxLabel, mask, denseArr);
 
     // generate the lists from the dense array
-    std::list<rect_t> dense;
-    dense = std::list<rect_t>(denseArr, 
-        denseArr + sizeof(denseArr)/sizeof(rect_t));
-    output = std::list<rect_t>(denseArr, 
+    std::list<rect_t> ovlpCand;
+    ovlpCand = std::list<rect_t>(denseArr, 
         denseArr + sizeof(denseArr)/sizeof(rect_t));
 
-    // sort the list of dense regions by its y coordinate (using lambda)
-    dense.sort([](const rect_t& a, const rect_t& b) { return a.yi < b.yi;});
+    // keep trying to remove overlapping regions until there is none
+    while (!ovlpCand.empty()) {
+        // remove regions that are overlapping within another bigger region
+        removeInsideOvlp(ovlpCand);
+
+        // remove the overlap of two regions, side by side (vert and horz)
+        removeSideOvlp(ovlpCand);
+
+        // remove the diagonal overlaps
+        removeDiagOvlp(ovlpCand, output);
+    }
     
-    // remove regions that are overlapping within another bigger region
-    removeInsideOvlp(output);
-
-    // remove the overlap of two regions, side by side (vert and horz)
-    removeSideOvlp(output);
-
-    // remove the diagonal overlaps
-    removeDiagOvlp(output);
-
+    // sort the list of dense regions by its y coordinate (using lambda)
+    // dense.sort([](const rect_t& a, const rect_t& b) { return a.yi < b.yi;});
+    
     // generate the background regions
     // generateBackground(dense, output, input.cols);
 
