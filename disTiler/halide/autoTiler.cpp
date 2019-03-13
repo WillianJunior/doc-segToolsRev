@@ -71,68 +71,6 @@ void extractDense(int maxLabel, const cv::Mat& mask, rect_t* denseArr) {
     }
 }
 
-// yi = oldY
-// yo = min(r,cur)
-// xo = width
-void newBlocks(std::list<rect_t>& out, std::multiset<rect_t> cur, 
-    int yi, int yo, int xo) {
-
-    int xi = 0;
-    for (rect_t r : cur) {
-        rect_t newR = {xi, yi, r.xi, yo};
-        out.push_back(newR);
-        xi = r.xo;
-    }
-
-    // add last
-    rect_t newR = {xi, yi, xo, yo};
-    out.push_back(newR);
-}
-
-void generateBackground(std::list<rect_t>& dense, std::list<rect_t>& output) {
-
-    std::cout << "generating bg regions" << std::endl;
-    int oldY = 0;
-    std::multiset<rect_t> cur;
-    while (!cur.empty() || !dense.empty()) {
-        // std::cout << "|<dense,cur>| = " << dense.size() << ", " 
-        //     << cur.size() << std::endl;
-        
-        // get the heads of both lists
-        rect_t r;
-        if (!dense.empty())
-            r = *(dense.begin());
-
-        // std::cout << "dense|cur: (<" << r.xi << "," << r.yi << ">,<" 
-        //         << r.xo << "," << r.yo << ">)" << std::endl;
-        // if (!cur.empty() && !dense.empty()) {
-        //     rect_t c = *(cur.begin());
-        //     std::cout << "dense|cur: (<" << r.xi << "," << r.yi << ">,<" 
-        //         << r.xo << "," << r.yo << ">) | (<" << c.xi << "," << c.yi 
-        //         << ">,<" << c.xo << "," << c.yo << ">)" << std::endl;
-        //     if (r.xi == 3337 && r.yi == 192) {
-        //         int cc;
-        //         std::cin >> cc;
-        //     }
-        // }
-
-        // check if the current y is from the beginning of the end of a rect
-        // two comparisons are necessary since there may be a beginning with
-        // an end on the same coordinate
-        if (cur.empty() || (!dense.empty() && r.yi <= cur.begin()->yo)) {
-            // make the new rect blocks
-            // newBlocks(output, cur, oldY, r.yi, input.cols);
-            cur.insert(r);
-            dense.erase(dense.begin());
-        }
-        if (dense.empty() || (!cur.empty() && r.yi >= cur.begin()->yo)) {
-            // make the new rect blocks
-            // newBlocks(output, cur, oldY, cur.begin()->yo, input.cols);
-            cur.erase(cur.begin());
-        }
-    }
-}
-
 inline bool isInside(int x, int y, rect_t r2) {
     return r2.xi <= x && r2.yi <= y && r2.xo >= x && r2.yo >= y;
 }
@@ -239,6 +177,141 @@ void removeSideOvlp(std::list<rect_t>& output) {
     }
 }
 
+inline int area (rect_t r) {
+    return (r.xo-r.xi) * (r.yo-r.yi);
+}
+
+void removeDiagOvlp(std::list<rect_t>& output) {
+    // first create an array for parallelization
+    int outS = output.size();
+    rect_t outArray[outS];
+    std::copy(output.begin(), output.end(), outArray);
+
+    // array for the replaced 3 new blocks for every initial block
+    rect_t outRepArray[outS][3];
+
+    // marker array for showing which blocks were to be replaced
+    bool outRepArrayB[outS];
+    for (int i=0; i<outS; i++)
+        outRepArrayB[i] = false;
+
+    // compare each element with each other, checking if it's inside any
+    #pragma omp parallel for
+    for (int i=0; i<outS; i++) {
+        for (int j=0; j<outS; j++) {
+            rect_t b = outArray[i];
+            rect_t s = outArray[j];
+
+            // only break down if <i> is the big block of a diagonal overlap
+            if (area(outArray[i]) < area(outArray[j])) {
+                continue;
+            }
+
+            // break the big block if there is a diagonal overlap
+            if (b.xi > s.xi && b.xi < s.xo && b.yo > s.yi && b.yo < s.yo) {
+                // big on upper right diagonal
+                outRepArrayB[i] = true;
+                outRepArray[i][0] = {b.xi, b.yi, s.xo, s.yi};
+                outRepArray[i][1] = {s.xo, b.yi, b.xo, s.yi};
+                outRepArray[i][2] = {s.xo, s.yi, b.xo, b.yo};
+            } else if (b.xo > s.xi && b.xo < s.xo && b.yo > s.yi && b.yo < s.yo) {
+                // big on upper left
+                outRepArrayB[i] = true;
+                outRepArray[i][0] = {b.xi, b.yi, s.xi, s.yi};
+                outRepArray[i][1] = {s.xi, b.yi, b.xo, s.yi};
+                outRepArray[i][2] = {b.xi, s.yi, s.xi, b.yo};
+            } else if (b.xi > s.xi && b.xi < s.xo && b.yi > s.yi && b.yi < s.yo) {
+                // big on bottom right
+                outRepArrayB[i] = true;
+                outRepArray[i][0] = {s.xo, b.yi, b.xo, s.yo};
+                outRepArray[i][1] = {b.xi, s.yo, s.xo, b.yo};
+                outRepArray[i][2] = {s.xo, s.yo, b.xo, b.yo};
+            } else if (b.xo > s.xi && b.xo < s.xo && b.yi > s.yi && b.yi < s.yo) {
+                // big on bottom left
+                outRepArrayB[i] = true;
+                outRepArray[i][0] = {b.xi, b.yi, s.xi, s.yo};
+                outRepArray[i][1] = {s.xi, s.yo, b.xo, b.yo};
+                outRepArray[i][2] = {b.xi, s.yo, s.xi, b.yo};
+            }
+        }
+    }
+
+    // clear the old elements and add only the unique regions
+    output.clear();
+    for (int i=0; i<outS; i++) {
+        if (outRepArrayB[i]) {
+            output.push_back(outRepArray[i][0]);
+            output.push_back(outRepArray[i][1]);
+            output.push_back(outRepArray[i][2]);
+        } else
+            output.push_back(outArray[i]);
+
+    }
+}
+
+// yi = oldY
+// yo = min(r,cur)
+// xo = width
+void newBlocks(std::list<rect_t>& out, std::multiset<rect_t> cur, 
+    int yi, int yo, int xo) {
+
+    int xi = 0;
+    for (rect_t r : cur) {
+        rect_t newR = {xi, yi, r.xi, yo};
+        out.push_back(newR);
+        xi = r.xo;
+    }
+
+    // add last
+    rect_t newR = {xi, yi, xo, yo};
+    out.push_back(newR);
+}
+
+void generateBackground(std::list<rect_t>& dense, 
+    std::list<rect_t>& output, int maxCols) {
+
+    std::cout << "generating bg regions" << std::endl;
+    int oldY = 0;
+    std::multiset<rect_t> cur;
+    while (!cur.empty() || !dense.empty()) {
+        // std::cout << "|<dense,cur>| = " << dense.size() << ", " 
+        //     << cur.size() << std::endl;
+        
+        // get the heads of both lists
+        rect_t r;
+        if (!dense.empty())
+            r = *(dense.begin());
+
+        // std::cout << "dense|cur: (<" << r.xi << "," << r.yi << ">,<" 
+        //         << r.xo << "," << r.yo << ">)" << std::endl;
+        // if (!cur.empty() && !dense.empty()) {
+        //     rect_t c = *(cur.begin());
+        //     std::cout << "dense|cur: (<" << r.xi << "," << r.yi << ">,<" 
+        //         << r.xo << "," << r.yo << ">) | (<" << c.xi << "," << c.yi 
+        //         << ">,<" << c.xo << "," << c.yo << ">)" << std::endl;
+        //     if (r.xi == 3337 && r.yi == 192) {
+        //         int cc;
+        //         std::cin >> cc;
+        //     }
+        // }
+
+        // check if the current y is from the beginning of the end of a rect
+        // two comparisons are necessary since there may be a beginning with
+        // an end on the same coordinate
+        if (cur.empty() || (!dense.empty() && r.yi <= cur.begin()->yo)) {
+            // make the new rect blocks
+            newBlocks(output, cur, oldY, r.yi, maxCols);
+            cur.insert(r);
+            dense.erase(dense.begin());
+        }
+        if (dense.empty() || (!cur.empty() && r.yi >= cur.begin()->yo)) {
+            // make the new rect blocks
+            newBlocks(output, cur, oldY, cur.begin()->yo, maxCols);
+            cur.erase(cur.begin());
+        }
+    }
+}
+
 std::list<rect_t> autoTiler(cv::Mat& input, int border, 
     int bgThreshold, int erosionSize) {
 
@@ -279,15 +352,18 @@ std::list<rect_t> autoTiler(cv::Mat& input, int border,
 
     // sort the list of dense regions by its y coordinate (using lambda)
     dense.sort([](const rect_t& a, const rect_t& b) { return a.yi < b.yi;});
-
-    // generate the background regions
-    generateBackground(dense, output);
     
     // remove regions that are overlapping within another bigger region
     removeInsideOvlp(output);
 
     // remove the overlap of two regions, side by side (vert and horz)
     removeSideOvlp(output);
+
+    // remove the diagonal overlaps
+    removeDiagOvlp(output);
+
+    // generate the background regions
+    // generateBackground(dense, output, input.cols);
 
     // add a border to all rect regions
     std::cout << output.size() << " regions to process" << std::endl;
@@ -303,7 +379,7 @@ std::list<rect_t> autoTiler(cv::Mat& input, int border,
 
         // draw areas for verification
         cv::rectangle(final, cv::Point(r->xi,r->yi), 
-            cv::Point(r->xo,r->yo),(0,0,0),10);
+            cv::Point(r->xo,r->yo),(0,0,0),3);
     }
     cv::imwrite("./maskf.png", final);
 
