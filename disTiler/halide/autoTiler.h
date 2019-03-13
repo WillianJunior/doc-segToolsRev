@@ -14,6 +14,6 @@
 #include "distTiling.h"
 
 std::list<rect_t> autoTiler(cv::Mat& input, int border=10, 
-    int bgThreshold=50, int erosionSize=20); // erosion 20 ok
+    int bgThreshold=50, int erosionSize=50); // erosion 20 ok
 
 #endif
