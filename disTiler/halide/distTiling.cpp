@@ -2,7 +2,7 @@
 
 using namespace std;
 
-int serializeMat(cv::Mat& m, char *buffer) {
+int serializeMat(cv::Mat& m, char* buffer[]) {
     // size = rows * columns * channels * sizeof type
     int size = m.total() * m.elemSize();
 
@@ -10,17 +10,18 @@ int serializeMat(cv::Mat& m, char *buffer) {
     size += 4*sizeof(int);
 
     // create the buffer
-    buffer = new char(size);
+    *buffer = new char[size];
 
     // add basic fields of a mat
     int rows = m.rows;
     int cols = m.cols;
     int type = m.type();
     int channels = m.channels();
-    memcpy(&buffer[0*sizeof(int)], (char*)&rows, sizeof(int));
-    memcpy(&buffer[1*sizeof(int)], (char*)&cols, sizeof(int));
-    memcpy(&buffer[2*sizeof(int)], (char*)&type, sizeof(int));
-    memcpy(&buffer[3*sizeof(int)], (char*)&channels, sizeof(int));
+
+    memcpy(&(*buffer)[0*sizeof(int)], &rows, sizeof(int));
+    memcpy(&(*buffer)[1*sizeof(int)], &cols, sizeof(int));
+    memcpy(&(*buffer)[2*sizeof(int)], &type, sizeof(int));
+    memcpy(&(*buffer)[3*sizeof(int)], &channels, sizeof(int));
 
     // mat data need to be contiguous in order to use memcpy
     if(!m.isContinuous()){ 
@@ -28,12 +29,12 @@ int serializeMat(cv::Mat& m, char *buffer) {
     }
 
     // copy actual data to buffer
-    memcpy(&buffer[4*sizeof(int)], m.data, m.total()*m.channels());
+    memcpy(&(*buffer)[4*sizeof(int)], m.data, m.total()*m.channels());
 
     return size;
 }
 
-void deserializeMat(cv::Mat& m, char* buffer) {
+void deserializeMat(cv::Mat& m, char buffer[]) {
     // get the basic fields of the mat
     int rows, cols, type, channels;
     memcpy((char*)&rows, &buffer[0*sizeof(int)], sizeof(int));
@@ -47,11 +48,12 @@ void deserializeMat(cv::Mat& m, char* buffer) {
 
 // pops the first element of a list, returning 0 if the list is empty
 template <typename T>
-int pop(const std::list<T>* l, T& out) {
+int pop(std::list<T>* l, T& out) {
     if (l->size() == 0)
         return 0;
     else {
         out = *(l->begin());
+        l->erase(l->begin());
         return 1;
     }
 }
@@ -62,8 +64,8 @@ void* sendRecvThread(void *args) {
     cv::Mat* input = ((thr_args_t*)args)->input;
     std::list<rect_t>* rQueue = ((thr_args_t*)args)->rQueue;
 
-    std::cout << "[sendRecvThread] Manager thread " 
-            << currentRank << " started" << std::endl;
+    std::cout << "[" << currentRank << "][sendRecvThread] Manager " 
+        << "thread started" << std::endl;
 
     // keep getting new rect's from the queue
     while (pop(rQueue, r) != 0) {
@@ -72,17 +74,20 @@ void* sendRecvThread(void *args) {
         // std::cout << r.yo-r.yi << "|" << r.xo-r.xi << std::endl;
         // std::cout << "size: " << input->cols << "," 
         //     << input->rows << std::endl;
-        
+
         // generate a submat from the rect's queue
         cv::Mat subm = input->colRange(r.yi, r.yo).rowRange(r.xi, r.xo);
         
         // serialize the mat
+        // char* buffer = new char[4*sizeof(int) + subm.total() * subm.elemSize()];
         char* buffer;
-        int bufSize = serializeMat(subm, buffer);
+        int bufSize = serializeMat(subm, &buffer);
+
+        cv::imwrite("./serializedSent.png", subm);
 
         // send the tile size and the tile itself
         MPI_Send(&bufSize, 1, MPI_INT, currentRank, MPI_TAG, MPI_COMM_WORLD);
-        MPI_Send(&buffer, bufSize, MPI_UNSIGNED_CHAR, 
+        MPI_Send(buffer, bufSize, MPI_UNSIGNED_CHAR, 
             currentRank, MPI_TAG, MPI_COMM_WORLD);
 
         std::cout << "4" << std::endl;
@@ -90,7 +95,7 @@ void* sendRecvThread(void *args) {
         // wait for the resulting mat
         // obs: the same sent buffer is used for receiving since they must
         //   have the same size.
-        MPI_Recv(&buffer, bufSize, MPI_UNSIGNED_CHAR, 
+        MPI_Recv(buffer, bufSize, MPI_UNSIGNED_CHAR, 
             currentRank, MPI_TAG, MPI_COMM_WORLD, NULL);
 
         std::cout << "5" << std::endl;
@@ -125,12 +130,12 @@ void* sendRecvThread(void *args) {
 int recvTile(cv::Mat& tile, int rank) {
     
     // get the mat object size
-    std::cout << "[recvTile][" << rank << "] Waiting " << std::endl;
+    std::cout << "[" << rank << "][recvTile] Waiting " << std::endl;
     int bufSize = 0;
     MPI_Recv(&bufSize, 1, MPI_INT, MPI_MANAGER_RANK, 
         MPI_TAG, MPI_COMM_WORLD, NULL);
 
-    std::cout << "[recvTile][" << rank << "] received size " 
+    std::cout << "[" << rank << "][recvTile] received size " 
         << bufSize << std::endl;
 
     // get the actual data, if there is any
@@ -139,20 +144,20 @@ int recvTile(cv::Mat& tile, int rank) {
 
         MPI_Recv(buffer, bufSize, MPI_UNSIGNED_CHAR, 
             MPI_MANAGER_RANK, MPI_TAG, MPI_COMM_WORLD, NULL);
-        std::cout << "[recvTile][" << rank << "] received tile " << std::endl;
+        std::cout << "[" << rank << "][recvTile] Received tile " << std::endl;
 
         // generate the output mat from the received data
         deserializeMat(tile, buffer);
         delete[] buffer;
-        std::cout << "[recvTile][" << rank << "] tile deserialized" << std::endl;
+        std::cout << "[" << rank << "][recvTile] Tile deserialized" << std::endl;
     }
 
     return bufSize;
 }
 
-void sendTile(cv::Mat& tile) {
+// void sendTile(cv::Mat& tile) {
 
-}
+// }
 
 int distExec(int argc, char* argv[], cv::Mat& inImg, cv::Mat& outImg) {
 
@@ -173,7 +178,15 @@ int distExec(int argc, char* argv[], cv::Mat& inImg, cv::Mat& outImg) {
     // node 0 is the manager
     if (rank == 0) {
         std::list<rect_t> rQueue = autoTiler(inImg);
-        std::cout << "[distExec] Starting manager with " 
+        std::cout << "[" << rank << "][distExec] Starting manager with " 
+            << rQueue.size() << " tiles" << std::endl;
+
+        // REMOVE TEST
+        rect_t r;
+        for (int i=0; i<5; i++)
+            pop(&rQueue, r);
+
+        std::cout << "[" << rank << "][distExec] Starting manager with " 
             << rQueue.size() << " tiles" << std::endl;
 
         // create a send/recv thread for each worker
@@ -186,14 +199,15 @@ int distExec(int argc, char* argv[], cv::Mat& inImg, cv::Mat& outImg) {
             pthread_create(&threadsId[p-1], NULL, sendRecvThread, args);
         }
 
-        std::cout << "[distExec] Manager waiting for comm threads to finish\n";
+        std::cout << "[" << rank << "][distExec] Manager waiting "
+            << "for comm threads to finish\n";
 
         // wait for all threads to finish
         for (int p=1; p<=np; p++) {
             pthread_join(threadsId[p-1], NULL);
         }
     } else {
-        std::cout << "[distExec] Starting worker " << rank << std::endl;
+        std::cout << "[" << rank << "][distExec] Starting worker" << std::endl;
 
         // receive either a new tile or an empty tag, signaling the end
         cv::Mat curTile;
@@ -203,9 +217,9 @@ int distExec(int argc, char* argv[], cv::Mat& inImg, cv::Mat& outImg) {
         // recvTile returns the tile size, returning 0 if the
         //   tile is empty, signaling that there are no more tiles
         int bufSize = 0;
-        std::cout << "[distExec][" << rank << "] Waiting new tile" << std::endl;
+        std::cout << "[" << rank << "][distExec] Waiting new tile" << std::endl;
         while ((bufSize = recvTile(curTile, rank)) > 0) {
-            std::cout << "[distExec][" << rank << "] Got tile" << std::endl;
+            std::cout << "[" << rank << "][distExec] Got tile" << std::endl;
 
             // allocate halide buffers
             Halide::Runtime::Buffer<uint8_t> h_curTile = 
@@ -215,27 +229,33 @@ int distExec(int argc, char* argv[], cv::Mat& inImg, cv::Mat& outImg) {
                 Halide::Runtime::Buffer<uint8_t>(
                 outTile.data, outTile.cols, outTile.rows);
 
+            cv::imwrite("./serializedRecv.png", curTile);
+
             // execute blur 
-            std::cout << "[distExec][" << rank << "] Executing" << std::endl;
+            std::cout << "[" << rank << "][distExec] Executing" << std::endl;
             blurAOT(h_curTile, h_outTile);
+
+            cv::imwrite("./serializedRecvExec.png", outTile);
             
             // serialize the output tile
             char* buffer;
-            if (bufSize != serializeMat(outTile, buffer)) {
-                std::cout << "[distExec] Output tile have a different " 
-                    << "size from the input one." << std::endl;
+            if (bufSize != serializeMat(outTile, &buffer)) {
+                std::cout << "exp: " << bufSize << " but got: " 
+                    << serializeMat(outTile, &buffer) << std::endl;
+                std::cout << "[" << rank << "][distExec] Output tile "
+                    << "have a different size from the input one." << std::endl;
                 exit(1);
             }
 
             // send it back to the manager
-            std::cout << "[distExec][" << rank 
-                << "] Sending result" << std::endl;
-            MPI_Send(&buffer, bufSize, MPI_UNSIGNED_CHAR, 
+            std::cout << "[" << rank << "][distExec] Sending result" 
+                << std::endl;
+            MPI_Send(buffer, bufSize, MPI_UNSIGNED_CHAR, 
                 rank, MPI_TAG, MPI_COMM_WORLD);
-            std::cout << "[distExec][" << rank << "] Waiting new tile" 
+            std::cout << "[" << rank << "][distExec] Waiting new tile" 
                 << std::endl;
         }
-        std::cout << "[distExec][" << rank << "] Finished" << std::endl;
+        std::cout << "[" << rank << "][distExec] Worker finished" << std::endl;
     }
 
     MPI_Finalize();

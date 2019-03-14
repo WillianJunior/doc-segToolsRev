@@ -479,7 +479,7 @@ std::list<rect_t> autoTiler(cv::Mat& input, int border,
     std::list<rect_t> dense(output);
     
     // generate the background regions
-    generateBackground(dense, output, input.cols, input);
+    // generateBackground(dense, output, input.cols, input);
 
     // add a border to all rect regions
     std::cout << "[autoTiler] Total regions to process: " 
