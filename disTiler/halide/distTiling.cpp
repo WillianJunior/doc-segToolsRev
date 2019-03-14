@@ -37,13 +37,18 @@ int serializeMat(cv::Mat& m, char* buffer[]) {
 void deserializeMat(cv::Mat& m, char buffer[]) {
     // get the basic fields of the mat
     int rows, cols, type, channels;
-    memcpy((char*)&rows, &buffer[0*sizeof(int)], sizeof(int));
-    memcpy((char*)&cols, &buffer[1*sizeof(int)], sizeof(int));
-    memcpy((char*)&type, &buffer[2*sizeof(int)], sizeof(int));
-    memcpy((char*)&channels, &buffer[3*sizeof(int)], sizeof(int));//NOT USING YET?
+    memcpy(&rows, &(buffer[0*sizeof(int)]), sizeof(int));
+    memcpy(&cols, &(buffer[1*sizeof(int)]), sizeof(int));
+    memcpy(&type, &(buffer[2*sizeof(int)]), sizeof(int));
+    memcpy(&channels, &(buffer[3*sizeof(int)]), sizeof(int));//NOT USING YET?
+
+    std::cout << rows << std::endl;
+    std::cout << cols << std::endl;
+    std::cout << type << std::endl;
+    std::cout << channels << std::endl;
 
     // create the new mat with the basic fields and the actual data
-    m = cv::Mat(rows, cols, type, &buffer[4*sizeof(int)]);
+    m = cv::Mat(rows, cols, type, &(buffer[4*sizeof(int)]));
 }
 
 // pops the first element of a list, returning 0 if the list is empty
@@ -79,7 +84,6 @@ void* sendRecvThread(void *args) {
         cv::Mat subm = input->colRange(r.yi, r.yo).rowRange(r.xi, r.xo);
         
         // serialize the mat
-        // char* buffer = new char[4*sizeof(int) + subm.total() * subm.elemSize()];
         char* buffer;
         int bufSize = serializeMat(subm, &buffer);
 
@@ -113,7 +117,7 @@ void* sendRecvThread(void *args) {
 
         std::cout << "7" << std::endl;
 
-        free(buffer);
+        delete[] buffer;
     }
 
     std::cout << "8" << std::endl;
@@ -148,8 +152,10 @@ int recvTile(cv::Mat& tile, int rank) {
 
         // generate the output mat from the received data
         deserializeMat(tile, buffer);
-        delete[] buffer;
-        std::cout << "[" << rank << "][recvTile] Tile deserialized" << std::endl;
+        // buffer leaking but can't delete here since tile data is here-------
+        // delete[] buffer; 
+        std::cout << "[" << rank << "][recvTile] Tile deserialized" 
+        << std::endl;
     }
 
     return bufSize;
