@@ -42,11 +42,6 @@ void deserializeMat(cv::Mat& m, char buffer[]) {
     memcpy(&type, &(buffer[2*sizeof(int)]), sizeof(int));
     memcpy(&channels, &(buffer[3*sizeof(int)]), sizeof(int));//NOT USING YET?
 
-    std::cout << rows << std::endl;
-    std::cout << cols << std::endl;
-    std::cout << type << std::endl;
-    std::cout << channels << std::endl;
-
     // create the new mat with the basic fields and the actual data
     m = cv::Mat(rows, cols, type, &(buffer[4*sizeof(int)]));
 }
@@ -86,8 +81,6 @@ void* sendRecvThread(void *args) {
         // serialize the mat
         char* buffer;
         int bufSize = serializeMat(subm, &buffer);
-
-        cv::imwrite("./serializedSent.png", subm);
 
         // send the tile size and the tile itself
         MPI_Send(&bufSize, 1, MPI_INT, currentRank, MPI_TAG, MPI_COMM_WORLD);
