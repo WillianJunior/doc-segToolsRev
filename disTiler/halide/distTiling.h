@@ -9,6 +9,7 @@
 #include "PriorityQ.h"
 
 #define MPI_TAG 0
+#define MPI_MANAGER_RANK 0
 
 typedef struct rect_t {
 	int xi, yi;

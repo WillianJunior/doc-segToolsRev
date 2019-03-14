@@ -318,7 +318,7 @@ void newBlocks(std::list<rect_t>& out, std::multiset<rect_t,rect_tCompX> cur,
 void generateBackground(std::list<rect_t>& dense, 
     std::list<rect_t>& output, int maxCols, cv::Mat& input) {
 
-    std::cout << "generating bg regions" << std::endl;
+    // std::cout << "generating bg regions" << std::endl;
     int oldY = 0;
     std::multiset<rect_t,rect_tCompX> curX;
     std::multiset<rect_t,rect_tCompY> curY;
@@ -418,7 +418,7 @@ void generateBackground(std::list<rect_t>& dense,
 std::list<rect_t> autoTiler(cv::Mat& input, int border, 
     int bgThreshold, int erosionSize) {
 
-    std::cout << "starting tiling" << std::endl;
+    std::cout << "[autoTiler] Starting tiling" << std::endl;
 
     std::list<rect_t> output;
     
@@ -448,8 +448,9 @@ std::list<rect_t> autoTiler(cv::Mat& input, int border,
 
     double maxLabel;
     cv::minMaxLoc(mask, NULL, &maxLabel);
-    std::cout << "img size: " << mask.cols << "x" << mask.rows << std::endl;
-    std::cout << "labels: " << maxLabel << std::endl;
+    std::cout << "[autoTiler] Image size: " 
+        << mask.cols << "x" << mask.rows << std::endl;
+    std::cout << "[autoTiler] Initial dense regions: " << maxLabel << std::endl;
     
     // generate the list of dense areas
     std::list<rect_t> ovlpCand;
@@ -481,7 +482,8 @@ std::list<rect_t> autoTiler(cv::Mat& input, int border,
     generateBackground(dense, output, input.cols, input);
 
     // add a border to all rect regions
-    std::cout << output.size() << " regions to process" << std::endl;
+    std::cout << "[autoTiler] Total regions to process: " 
+        << output.size() << std::endl;
     cv::Mat final = input.clone();
     for (std::list<rect_t>::iterator r=output.begin(); r!=output.end(); r++) {
         // r->xi = std::min(r->xi-border, 0);
