@@ -97,31 +97,6 @@ void printMS(std::multiset<rect_t,rect_tCompX> lx,
     }
 }
 
-void extractDense(int maxLabel, const cv::Mat& mask, rect_t* denseArr) {
-    #pragma omp parallel for // toooo slow to have it not in parallel
-    for (int l=1; l<(int)maxLabel; l++) { // l starts at 1 since 0 is background
-        cv::Mat subMask = cv::Mat::zeros(mask.size(), mask.type());
-        cv::Mat subMaskTmp = cv::Mat::zeros(mask.size(), mask.type());
-
-        std::cout << "finding submask points of label " << l << std::endl;
-        // subMaskTmp = mask - l
-        cv::subtract(mask, cv::Scalar(l), subMaskTmp);
-        // subMask(I) = 255 if subMaskTmp(I) != 0
-        subMaskTmp = cv::abs(subMaskTmp);
-        subMaskTmp.convertTo(subMaskTmp, CV_8U);
-        cv::add(subMask, cv::Scalar(CV_MAX_PIX_VAL), subMask, subMaskTmp);
-        // subMask = 255 - subMask
-        cv::subtract(cv::Scalar(CV_MAX_PIX_VAL), subMask, subMask);
-        
-        // create a minimum rectangle area of all pixels of the submask
-        // std::cout << "getting max rectangle" << std::endl;
-        subMask.convertTo(subMask, CV_8U);
-        cv::Rect r = cv::boundingRect(subMask);
-        rect_t rr = {.xi=r.x, .yi=r.y, .xo=r.x+r.width, .yo=r.y+r.height};
-        denseArr[l-1] = rr;
-    }
-}
-
 inline bool isInside(int x, int y, rect_t r2) {
     return r2.xi <= x && r2.yi <= y && r2.xo >= x && r2.yo >= y;
 }
@@ -348,6 +323,9 @@ void generateBackground(std::list<rect_t>& dense,
     std::multiset<rect_t,rect_tCompX> curX;
     std::multiset<rect_t,rect_tCompY> curY;
 
+    // sort dense by the top of each area
+    dense.sort([](const rect_t& a, const rect_t& b) { return a.yi < b.yi;});
+
     while (!curY.empty() || !dense.empty()) {
         // std::cout << "|<dense,cur>| = " << dense.size() << ", " 
         //     << cur.size() << std::endl;
@@ -421,7 +399,9 @@ void generateBackground(std::list<rect_t>& dense,
         // // add a border to all rect regions
         // cv::Mat final = input.clone();
         // int ii=0;
-        // for (std::list<rect_t>::iterator r=output.begin(); r!=output.end(); r++) {
+        // for (std::list<rect_t>::iterator r=output.begin(); 
+        //     r!=output.end(); r++) {
+
         //     // draw areas for verification
         //     cv::rectangle(final, cv::Point(r->xi,r->yi), 
         //         cv::Point(r->xo,r->yo),(0,0,0),3);
@@ -450,7 +430,17 @@ std::list<rect_t> autoTiler(cv::Mat& input, int border,
     cv::dilate(mask, mask, element);
 
     // merge regions of interest together and mark them separately
-    cv::connectedComponents(mask, mask);
+    cv::Mat stats, centroids;
+    cv::connectedComponentsWithStats(mask, mask, stats, centroids);
+
+    // std::cout << "STATS:" << std::endl;
+    // std::cout << "CC_STAT_LEFT: "   << stats.at<int>(10, cv::CC_STAT_LEFT)
+    //         << "\nCC_STAT_TOP: "    << stats.at<int>(10, cv::CC_STAT_TOP)
+    //         << "\nCC_STAT_WIDTH: "  << stats.at<int>(10, cv::CC_STAT_WIDTH)
+    //         << "\nCC_STAT_HEIGHT: " << stats.at<int>(10, cv::CC_STAT_HEIGHT)
+    //         << "\nCC_STAT_AREA: "   << stats.at<int>(10, cv::CC_STAT_AREA)
+    //         << std::endl;
+
     // cv::Mat cm = mask.clone();
     // cm.convertTo(cm, CV_8U);
     // cv::applyColorMap(cm, cm, cl::COLORMAP_JET);
@@ -461,13 +451,16 @@ std::list<rect_t> autoTiler(cv::Mat& input, int border,
     std::cout << "img size: " << mask.cols << "x" << mask.rows << std::endl;
     std::cout << "labels: " << maxLabel << std::endl;
     
-    rect_t denseArr[(int)maxLabel]; // i.e. a thread safe list
-    extractDense(maxLabel, mask, denseArr);
-
-    // generate the lists from the dense array
+    // generate the list of dense areas
     std::list<rect_t> ovlpCand;
-    ovlpCand = std::list<rect_t>(denseArr, 
-        denseArr + sizeof(denseArr)/sizeof(rect_t));
+    for (int i=1; i<=maxLabel; i++) { // i=1 ignores background
+        int xi = stats.at<int>(i, cv::CC_STAT_LEFT);
+        int yi = stats.at<int>(i, cv::CC_STAT_TOP);
+        int xw = stats.at<int>(i, cv::CC_STAT_WIDTH);
+        int yh = stats.at<int>(i, cv::CC_STAT_HEIGHT);
+        rect_t rr = {.xi=xi, .yi=yi, .xo=xi+xw, .yo=yi+yh};
+        ovlpCand.push_back(rr);
+    }
 
     // keep trying to remove overlapping regions until there is none
     while (!ovlpCand.empty()) {
@@ -483,8 +476,6 @@ std::list<rect_t> autoTiler(cv::Mat& input, int border,
     
     // sort the list of dense regions by its y coordinate (using lambda)
     std::list<rect_t> dense(output);
-    dense.sort([](const rect_t& a, const rect_t& b) { return a.yi < b.yi;});
-    output.sort([](const rect_t& a, const rect_t& b) { return a.yi < b.yi;});
     
     // generate the background regions
     generateBackground(dense, output, input.cols, input);
