@@ -76,7 +76,7 @@ void* sendRecvThread(void *args) {
         //     << input->rows << std::endl;
 
         // generate a submat from the rect's queue
-        cv::Mat subm = input->colRange(r.yi, r.yo).rowRange(r.xi, r.xo);
+        cv::Mat subm = input->colRange(r.xi, r.xo).rowRange(r.yi, r.yo);
         
         // serialize the mat
         char* buffer;
@@ -87,39 +87,40 @@ void* sendRecvThread(void *args) {
         MPI_Send(buffer, bufSize, MPI_UNSIGNED_CHAR, 
             currentRank, MPI_TAG, MPI_COMM_WORLD);
 
-        std::cout << "4" << std::endl;
-
         // wait for the resulting mat
         // obs: the same sent buffer is used for receiving since they must
         //   have the same size.
         MPI_Recv(buffer, bufSize, MPI_UNSIGNED_CHAR, 
             currentRank, MPI_TAG, MPI_COMM_WORLD, NULL);
 
-        std::cout << "5" << std::endl;
-
         // make a mat object from the returned buffer data
         cv::Mat resultm;
         deserializeMat(resultm, buffer);
 
-        std::cout << "6" << std::endl;
-
         // copy result data back to input
         // NOT THREAD-SAFE (ok because there is no overlap)
-        cv::Mat aux = input->colRange(r.yi, r.yo-r.yi).rowRange(r.xi, r.xo-r.xi);
-        resultm.copyTo(aux);
+        // cv::Mat aux = input->colRange(r.xi, r.xo).rowRange(r.yi, r.yo);
+        resultm.copyTo((*input)(cv::Rect(r.xi, r.yi, r.xo-r.xi, r.yo-r.yi)));
 
-        std::cout << "7" << std::endl;
+        // cv::imwrite("./partial.png", *input);
+        // char d;
+        // std::cin >> d;
+
 
         delete[] buffer;
     }
 
-    std::cout << "8" << std::endl;
+    std::cout << "[" << currentRank << "][sendRecvThread] Manager " 
+        << "thread has no more tiles" << std::endl;
+
+    cv::imwrite("./final.png", *input);
+
+
+    // std::cout << "" << std::endl;
 
     // send final empty message, signaling the end
     int end = 0;
     MPI_Send(&end, 1, MPI_INT, currentRank, MPI_TAG, MPI_COMM_WORLD);
-
-    std::cout << "9" << std::endl;
 
     return NULL;
 }
@@ -127,7 +128,7 @@ void* sendRecvThread(void *args) {
 int recvTile(cv::Mat& tile, int rank) {
     
     // get the mat object size
-    std::cout << "[" << rank << "][recvTile] Waiting " << std::endl;
+    // std::cout << "[" << rank << "][recvTile] Waiting " << std::endl;
     int bufSize = 0;
     MPI_Recv(&bufSize, 1, MPI_INT, MPI_MANAGER_RANK, 
         MPI_TAG, MPI_COMM_WORLD, NULL);
@@ -148,15 +149,11 @@ int recvTile(cv::Mat& tile, int rank) {
         // buffer leaking but can't delete here since tile data is here-------
         // delete[] buffer; 
         std::cout << "[" << rank << "][recvTile] Tile deserialized" 
-        << std::endl;
+            << std::endl;
     }
 
     return bufSize;
 }
-
-// void sendTile(cv::Mat& tile) {
-
-// }
 
 int distExec(int argc, char* argv[], cv::Mat& inImg, cv::Mat& outImg) {
 
@@ -180,14 +177,6 @@ int distExec(int argc, char* argv[], cv::Mat& inImg, cv::Mat& outImg) {
         std::cout << "[" << rank << "][distExec] Starting manager with " 
             << rQueue.size() << " tiles" << std::endl;
 
-        // REMOVE TEST
-        rect_t r;
-        for (int i=0; i<5; i++)
-            pop(&rQueue, r);
-
-        std::cout << "[" << rank << "][distExec] Starting manager with " 
-            << rQueue.size() << " tiles" << std::endl;
-
         // create a send/recv thread for each worker
         pthread_t threadsId[np-1];
         for (int p=1; p<np; p++) {
@@ -195,22 +184,25 @@ int distExec(int argc, char* argv[], cv::Mat& inImg, cv::Mat& outImg) {
             args->currentRank = p;
             args->input = &inImg;
             args->rQueue = &rQueue;
-            pthread_create(&threadsId[p-1], NULL, sendRecvThread, args);
+            pthread_create(&threadsId[p], NULL, sendRecvThread, args);
         }
 
         std::cout << "[" << rank << "][distExec] Manager waiting "
             << "for comm threads to finish\n";
 
         // wait for all threads to finish
-        for (int p=1; p<=np; p++) {
-            pthread_join(threadsId[p-1], NULL);
+        for (int p=1; p<np; p++) {
+            pthread_join(threadsId[p], NULL);
         }
+        std::cout << "[" << rank << "][distExec] " 
+            << "Manager threads done" << std::endl;
+
     } else {
         std::cout << "[" << rank << "][distExec] Starting worker" << std::endl;
 
         // receive either a new tile or an empty tag, signaling the end
         cv::Mat curTile;
-        cv::Mat outTile = cv::Mat::zeros(curTile.size(), curTile.type()); // ???
+        cv::Mat outTile;
 
         // keep processing tiles while there are tiles
         // recvTile returns the tile size, returning 0 if the
@@ -224,17 +216,14 @@ int distExec(int argc, char* argv[], cv::Mat& inImg, cv::Mat& outImg) {
             Halide::Runtime::Buffer<uint8_t> h_curTile = 
                 Halide::Runtime::Buffer<uint8_t>(
                 curTile.data, curTile.cols, curTile.rows);
+            outTile = cv::Mat::zeros(curTile.size(), curTile.type());
             Halide::Runtime::Buffer<uint8_t> h_outTile = 
                 Halide::Runtime::Buffer<uint8_t>(
                 outTile.data, outTile.cols, outTile.rows);
 
-            cv::imwrite("./serializedRecv.png", curTile);
-
             // execute blur 
             std::cout << "[" << rank << "][distExec] Executing" << std::endl;
             blurAOT(h_curTile, h_outTile);
-
-            cv::imwrite("./serializedRecvExec.png", outTile);
             
             // serialize the output tile
             char* buffer;
@@ -250,13 +239,15 @@ int distExec(int argc, char* argv[], cv::Mat& inImg, cv::Mat& outImg) {
             std::cout << "[" << rank << "][distExec] Sending result" 
                 << std::endl;
             MPI_Send(buffer, bufSize, MPI_UNSIGNED_CHAR, 
-                rank, MPI_TAG, MPI_COMM_WORLD);
+                MPI_MANAGER_RANK, MPI_TAG, MPI_COMM_WORLD);
             std::cout << "[" << rank << "][distExec] Waiting new tile" 
                 << std::endl;
         }
         std::cout << "[" << rank << "][distExec] Worker finished" << std::endl;
     }
 
+    MPI_Barrier(MPI_COMM_WORLD); 
     MPI_Finalize();
+
     return 0;
 }
