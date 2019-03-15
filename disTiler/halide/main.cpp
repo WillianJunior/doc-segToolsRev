@@ -12,12 +12,6 @@
 #include "autoTiler.h"
 
 // distributed execution:
-//  for each dense
-//      send and execute
-//  for each border
-//      send and execute
-//  for each bg
-//      send and execute
 // * distributed execution with border locality
 //  for each pair of leafs on the dense kd-tree
 //      send and execute 2 dense on 2 nodes
@@ -27,7 +21,8 @@
 //      execute half border on both nodes
 //      merge on next level to calculate border
 //      on last level border finish, return borders to root node
-//  * can use root node as manager, which only performs transfers and calculate bg on slack
+//  * can use root node as manager, which only performs transfers 
+//      and calculate bg on slack
 
 using namespace std;
 
@@ -54,7 +49,8 @@ int main(int argc, char *argv[]) {
         cout << "Missing distribution level." << endl;
         return 0;
     } else
-        paral = static_cast<Paral_t>(atoi(argv[find_arg_pos("-d", argc, argv)+1]));
+        paral = static_cast<Paral_t>(
+            atoi(argv[find_arg_pos("-d", argc, argv)+1]));
 
     // Input image
     string img_path;
@@ -72,11 +68,6 @@ int main(int argc, char *argv[]) {
         blur.sched();
         blur.run();
     } else if (paral == p_dist) {
-        // break tiles
-        // PriorityQ<rect_t> rQueue = autoTiler(input);
-        // std::list<rect_t> rQueue = autoTiler(input);
-        // std::list<rect_t> rQueue = autoTiler(input, 10, 50, 10);
-
         // perform distributed execution
         distExec(argc, argv, input, output);
     }
