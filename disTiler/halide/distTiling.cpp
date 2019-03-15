@@ -2,6 +2,11 @@
 
 using namespace std;
 
+/*****************************************************************************/
+/**                        OpenCV Mat serialization                         **/
+/*****************************************************************************/
+/*****************************************************************************/
+
 int serializeMat(cv::Mat& m, char* buffer[]) {
     // size = rows * columns * channels * sizeof type
     int size = m.total() * m.elemSize();
@@ -46,6 +51,11 @@ void deserializeMat(cv::Mat& m, char buffer[]) {
     m = cv::Mat(rows, cols, type, &(buffer[4*sizeof(int)]));
 }
 
+/*****************************************************************************/
+/**                         Communication routines                          **/
+/*****************************************************************************/
+/*****************************************************************************/
+
 // pops the first element of a list, returning 0 if the list is empty
 template <typename T>
 int pop(std::list<T>* l, T& out) {
@@ -56,6 +66,33 @@ int pop(std::list<T>* l, T& out) {
         l->erase(l->begin());
         return 1;
     }
+}
+
+int recvTile(cv::Mat& tile, int rank, char* buffer[]) {
+    // get the mat object size
+    // std::cout << "[" << rank << "][recvTile] Waiting " << std::endl;
+    int bufSize = 0;
+    MPI_Recv(&bufSize, 1, MPI_INT, MPI_MANAGER_RANK, 
+        MPI_TAG, MPI_COMM_WORLD, NULL);
+
+    std::cout << "[" << rank << "][recvTile] received size " 
+        << bufSize << std::endl;
+
+    // get the actual data, if there is any
+    if (bufSize > 0) {
+        *buffer = new char[bufSize];
+
+        MPI_Recv(*buffer, bufSize, MPI_UNSIGNED_CHAR, 
+            MPI_MANAGER_RANK, MPI_TAG, MPI_COMM_WORLD, NULL);
+        std::cout << "[" << rank << "][recvTile] Received tile " << std::endl;
+
+        // generate the output mat from the received data
+        deserializeMat(tile, *buffer);
+        std::cout << "[" << rank << "][recvTile] Tile deserialized" 
+            << std::endl;
+    }
+
+    return bufSize;
 }
 
 void* sendRecvThread(void *args) {
@@ -99,13 +136,11 @@ void* sendRecvThread(void *args) {
 
         // copy result data back to input
         // NOT THREAD-SAFE (ok because there is no overlap)
-        // cv::Mat aux = input->colRange(r.xi, r.xo).rowRange(r.yi, r.yo);
         resultm.copyTo((*input)(cv::Rect(r.xi, r.yi, r.xo-r.xi, r.yo-r.yi)));
 
         // cv::imwrite("./partial.png", *input);
         // char d;
         // std::cin >> d;
-
 
         delete[] buffer;
     }
@@ -125,35 +160,90 @@ void* sendRecvThread(void *args) {
     return NULL;
 }
 
-int recvTile(cv::Mat& tile, int rank) {
-    
-    // get the mat object size
-    // std::cout << "[" << rank << "][recvTile] Waiting " << std::endl;
-    int bufSize = 0;
-    MPI_Recv(&bufSize, 1, MPI_INT, MPI_MANAGER_RANK, 
-        MPI_TAG, MPI_COMM_WORLD, NULL);
+/*****************************************************************************/
+/**                              MPI processes                              **/
+/*****************************************************************************/
+/*****************************************************************************/
 
-    std::cout << "[" << rank << "][recvTile] received size " 
-        << bufSize << std::endl;
+void managerProc(int rank, int np, cv::Mat& inImg) {
+    std::list<rect_t> rQueue = autoTiler(inImg);
+    std::cout << "[" << rank << "][distExec] Starting manager with " 
+        << rQueue.size() << " tiles" << std::endl;
 
-    // get the actual data, if there is any
-    if (bufSize > 0) {
-        char* buffer = new char[bufSize];
-
-        MPI_Recv(buffer, bufSize, MPI_UNSIGNED_CHAR, 
-            MPI_MANAGER_RANK, MPI_TAG, MPI_COMM_WORLD, NULL);
-        std::cout << "[" << rank << "][recvTile] Received tile " << std::endl;
-
-        // generate the output mat from the received data
-        deserializeMat(tile, buffer);
-        // buffer leaking but can't delete here since tile data is here-------
-        // delete[] buffer; 
-        std::cout << "[" << rank << "][recvTile] Tile deserialized" 
-            << std::endl;
+    // create a send/recv thread for each worker
+    pthread_t threadsId[np-1];
+    for (int p=1; p<np; p++) {
+        thr_args_t* args = new thr_args_t();
+        args->currentRank = p;
+        args->input = &inImg;
+        args->rQueue = &rQueue;
+        pthread_create(&threadsId[p], NULL, sendRecvThread, args);
     }
 
-    return bufSize;
+    std::cout << "[" << rank << "][distExec] Manager waiting "
+        << "for comm threads to finish\n";
+
+    // wait for all threads to finish
+    for (int p=1; p<np; p++) {
+        pthread_join(threadsId[p], NULL);
+    }
+    std::cout << "[" << rank << "][distExec] " 
+        << "Manager threads done" << std::endl;
 }
+
+void workerProc(int rank) {
+    // receive either a new tile or an empty tag, signaling the end
+    cv::Mat curTile;
+    cv::Mat outTile;
+
+    // keep processing tiles while there are tiles
+    // recvTile returns the tile size, returning 0 if the
+    //   tile is empty, signaling that there are no more tiles
+    int bufSize = 0;
+    std::cout << "[" << rank << "][distExec] Waiting new tile" << std::endl;
+    char* recvBuffer;
+    while ((bufSize = recvTile(curTile, rank, &recvBuffer)) > 0) {
+        std::cout << "[" << rank << "][distExec] Got tile" << std::endl;
+
+        // allocate halide buffers
+        Halide::Runtime::Buffer<uint8_t> h_curTile = 
+            Halide::Runtime::Buffer<uint8_t>(
+            curTile.data, curTile.cols, curTile.rows);
+        outTile = cv::Mat::zeros(curTile.size(), curTile.type());
+        Halide::Runtime::Buffer<uint8_t> h_outTile = 
+            Halide::Runtime::Buffer<uint8_t>(
+            outTile.data, outTile.cols, outTile.rows);
+
+        // execute blur 
+        std::cout << "[" << rank << "][distExec] Executing" << std::endl;
+        blurAOT(h_curTile, h_outTile);
+        
+        // serialize the output tile
+        char* buffer;
+        serializeMat(outTile, &buffer);
+        // if (bufSize != serializeMat(outTile, &buffer)) {
+        //     std::cout << "[" << rank << "][distExec] Output tile "
+        //         << "have a different size from the input one." << std::endl;
+        //     exit(1);
+        // }
+
+        // send it back to the manager
+        std::cout << "[" << rank << "][distExec] Sending result" 
+            << std::endl;
+        MPI_Send(buffer, bufSize, MPI_UNSIGNED_CHAR, 
+            MPI_MANAGER_RANK, MPI_TAG, MPI_COMM_WORLD);
+        std::cout << "[" << rank << "][distExec] Waiting new tile" 
+            << std::endl;
+
+        delete[] recvBuffer;
+        delete[] buffer;
+    }
+}
+
+/*****************************************************************************/
+/**                              Main routine                               **/
+/*****************************************************************************/
+/*****************************************************************************/
 
 int distExec(int argc, char* argv[], cv::Mat& inImg, cv::Mat& outImg) {
 
@@ -173,76 +263,10 @@ int distExec(int argc, char* argv[], cv::Mat& inImg, cv::Mat& outImg) {
 
     // node 0 is the manager
     if (rank == 0) {
-        std::list<rect_t> rQueue = autoTiler(inImg);
-        std::cout << "[" << rank << "][distExec] Starting manager with " 
-            << rQueue.size() << " tiles" << std::endl;
-
-        // create a send/recv thread for each worker
-        pthread_t threadsId[np-1];
-        for (int p=1; p<np; p++) {
-            thr_args_t* args = new thr_args_t();
-            args->currentRank = p;
-            args->input = &inImg;
-            args->rQueue = &rQueue;
-            pthread_create(&threadsId[p], NULL, sendRecvThread, args);
-        }
-
-        std::cout << "[" << rank << "][distExec] Manager waiting "
-            << "for comm threads to finish\n";
-
-        // wait for all threads to finish
-        for (int p=1; p<np; p++) {
-            pthread_join(threadsId[p], NULL);
-        }
-        std::cout << "[" << rank << "][distExec] " 
-            << "Manager threads done" << std::endl;
-
+        managerProc(rank, np, inImg);
     } else {
         std::cout << "[" << rank << "][distExec] Starting worker" << std::endl;
-
-        // receive either a new tile or an empty tag, signaling the end
-        cv::Mat curTile;
-        cv::Mat outTile;
-
-        // keep processing tiles while there are tiles
-        // recvTile returns the tile size, returning 0 if the
-        //   tile is empty, signaling that there are no more tiles
-        int bufSize = 0;
-        std::cout << "[" << rank << "][distExec] Waiting new tile" << std::endl;
-        while ((bufSize = recvTile(curTile, rank)) > 0) {
-            std::cout << "[" << rank << "][distExec] Got tile" << std::endl;
-
-            // allocate halide buffers
-            Halide::Runtime::Buffer<uint8_t> h_curTile = 
-                Halide::Runtime::Buffer<uint8_t>(
-                curTile.data, curTile.cols, curTile.rows);
-            outTile = cv::Mat::zeros(curTile.size(), curTile.type());
-            Halide::Runtime::Buffer<uint8_t> h_outTile = 
-                Halide::Runtime::Buffer<uint8_t>(
-                outTile.data, outTile.cols, outTile.rows);
-
-            // execute blur 
-            std::cout << "[" << rank << "][distExec] Executing" << std::endl;
-            blurAOT(h_curTile, h_outTile);
-            
-            // serialize the output tile
-            char* buffer;
-            if (bufSize != serializeMat(outTile, &buffer)) {
-                std::cout << "exp: " << bufSize << " but got: " 
-                    << serializeMat(outTile, &buffer) << std::endl;
-                std::cout << "[" << rank << "][distExec] Output tile "
-                    << "have a different size from the input one." << std::endl;
-                exit(1);
-            }
-
-            // send it back to the manager
-            std::cout << "[" << rank << "][distExec] Sending result" 
-                << std::endl;
-            MPI_Send(buffer, bufSize, MPI_UNSIGNED_CHAR, 
-                MPI_MANAGER_RANK, MPI_TAG, MPI_COMM_WORLD);
-            std::cout << "[" << rank << "][distExec] Waiting new tile" 
-                << std::endl;
-        }
+        workerProc(rank);
         std::cout << "[" << rank << "][distExec] Worker finished" << std::endl;
     }
 
