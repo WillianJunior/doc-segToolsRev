@@ -1,50 +1,9 @@
 #include "autoTiler.h"
 
-// break input into bg and dense:
-//  get hotspots through threshold
-//      * can use user-defined functions
-//      dilate
-//  crop dense into rectangles
-//  make bg rectangles
-//      * merge bg's if merged is rectangular (this is done to 
-//      reduce borders count)
-// break dense list to reach 2*np dense tiles:
-//  each dense is an initial 1 node kd-tree
-//  make priority queue on the leaf nodes of all kd-trees ordered by cost
-//      * use smart queue structures (fibonacci tree?)
-//  until number of leaf nodes < 2*np:
-//      split leaf node with highest cost
-//      add new leaf nodes
-//      re-sort queue
-
-// std::string type2str(int type) {
-//   std::string r;
-
-//   uchar depth = type & CV_MAT_DEPTH_MASK;
-//   uchar chans = 1 + (type >>CV_CN_SHIFT);
-
-//   switch ( depth ) {
-//     case CV_8U:  r = "8U"; break;
-//     case CV_8S:  r = "8S"; break;
-//     case CV_16U: r = "16U"; break;
-//     case CV_16S: r = "16S"; break;
-//     case CV_32S: r = "32S"; break;
-//     case CV_32F: r = "32F"; break;
-//     case CV_64F: r = "64F"; break;
-//     default:     r = "User"; break;
-//   }
-
-//   r += "C";
-//   r += (chans+'0');
-
-//   return r;
-// }
-
-// overloaded < operator for sorting rect_t by x coordinate
-// bool operator<(const rect_t& a, const rect_t& b) {return a.xi < b.xi;}
-bool operator==(const rect_t& a, const rect_t& b) {
-    return a.xi == b.xi && a.xo == b.xo && a.yi == b.yi && a.yo == b.yo;
-}
+/*****************************************************************************/
+/**                           rect_t Comparators                            **/
+/*****************************************************************************/
+/*****************************************************************************/
 
 struct rect_tCompX{
     bool operator()(const rect_t& a, const rect_t& b) {
@@ -60,42 +19,10 @@ struct rect_tCompY{
     }
 };
 
-void printMS(std::multiset<rect_t,rect_tCompX> l) {
-    for (rect_t r : l)
-        std::cout << r.xi << "," << r.yi << "," 
-            << r.xo << "," << r.yo << std::endl;
-}
-
-void printMS(std::multiset<rect_t,rect_tCompY> l) {
-    for (rect_t r : l)
-        std::cout << r.xi << "," << r.yi << "," 
-            << r.xo << "," << r.yo << std::endl;
-}
-
-void printMS(std::multiset<rect_t,rect_tCompX> lx,
-    std::multiset<rect_t,rect_tCompY> ly) {
-
-    std::multiset<rect_t,rect_tCompX>::iterator ix = lx.begin();
-    std::multiset<rect_t,rect_tCompY>::iterator iy = ly.begin();
-
-    std::cout << "X \t\t|\t\t Y" << std::endl;
-    while (ix != lx.end() || iy != ly.end()) {
-        if (ix == lx.end()) {
-            std::cout << "---\t\t\t";
-        } else {
-            std::cout << ix->xi << "," << ix->yi << "|" 
-                << ix->xo << "," << ix->yo << "\t\t";
-            ix++;
-        }
-        if (iy == ly.end()) {
-            std::cout << "---\t\t\t";
-        } else {
-            std::cout << iy->yi << "," << iy->yi << "|" 
-                << iy->yo << "," << iy->yo << std::endl;
-            iy++;
-        }
-    }
-}
+/*****************************************************************************/
+/**                             Inside Overlap                              **/
+/*****************************************************************************/
+/*****************************************************************************/
 
 inline bool isInside(int x, int y, rect_t r2) {
     return r2.xi <= x && r2.yi <= y && r2.xo >= x && r2.yo >= y;
@@ -136,6 +63,11 @@ void removeInsideOvlp(std::list<rect_t>& output) {
             output.push_back(outArray[i]);
     }
 }
+
+/*****************************************************************************/
+/**                              Side Overlap                               **/
+/*****************************************************************************/
+/*****************************************************************************/
 
 inline bool hOvlp(rect_t big, rect_t small) {
     return big.yi <= small.yi && big.yo >= small.yo 
@@ -201,6 +133,11 @@ void removeSideOvlp(std::list<rect_t>& output) {
         output.push_back(outArray[i]);
     }
 }
+
+/*****************************************************************************/
+/**                            Diagonal Overlap                             **/
+/*****************************************************************************/
+/*****************************************************************************/
 
 inline int area (rect_t r) {
     return (r.xo-r.xi) * (r.yo-r.yi);
@@ -294,6 +231,11 @@ void removeDiagOvlp(std::list<rect_t>& ovlpCand, std::list<rect_t>& nonMod) {
     }
 }
 
+/*****************************************************************************/
+/**                          Background Generator                           **/
+/*****************************************************************************/
+/*****************************************************************************/
+
 // yi = oldY
 // yo = min(r,cur)
 // xo = width
@@ -318,7 +260,6 @@ void newBlocks(std::list<rect_t>& out, std::multiset<rect_t,rect_tCompX> cur,
 void generateBackground(std::list<rect_t>& dense, 
     std::list<rect_t>& output, int maxCols, cv::Mat& input) {
 
-    // std::cout << "generating bg regions" << std::endl;
     int oldY = 0;
     std::multiset<rect_t,rect_tCompX> curX;
     std::multiset<rect_t,rect_tCompY> curY;
@@ -327,33 +268,14 @@ void generateBackground(std::list<rect_t>& dense,
     dense.sort([](const rect_t& a, const rect_t& b) { return a.yi < b.yi;});
 
     while (!curY.empty() || !dense.empty()) {
-        // std::cout << "|<dense,cur>| = " << dense.size() << ", " 
-        //     << cur.size() << std::endl;
-        
-        // get the heads of both lists
+        // get the heads of dense, if there is one
         rect_t r;
         if (!dense.empty())
             r = *(dense.begin());
 
-        // std::cout << "dense|cur: (<" << r.xi << "," << r.yi << ">,<" 
-        //         << r.xo << "," << r.yo << ">)" << std::endl;
-        // if (!cur.empty() && !dense.empty()) {
-        //     rect_t c = *(cur.begin());
-        //     std::cout << "dense|cur: (<" << r.xi << "," << r.yi << ">,<" 
-        //         << r.xo << "," << r.yo << ">) | (<" << c.xi << "," << c.yi 
-        //         << ">,<" << c.xo << "," << c.yo << ">)" << std::endl;
-        //     if (r.xi == 3337 && r.yi == 192) {
-        //         int cc;
-        //         std::cin >> cc;
-        //     }
-        // }
-
         // check if the current y is from the beginning of the end of a rect
         // two comparisons are necessary since there may be a beginning with
         // an end on the same coordinate
-        // std::cout << "if1: " << r.yi << " <= "
-        //     << (curY.size()>0 ? std::to_string(curY.begin()->yo) : " empty") 
-        //     << std::endl;
         if (curY.empty() || (!dense.empty() && r.yi <= curY.begin()->yo)) {
             // make the new rect blocks
             newBlocks(output, curX, oldY, r.yi, maxCols);
@@ -365,60 +287,31 @@ void generateBackground(std::list<rect_t>& dense,
 
             // remove the new node from dense
             dense.erase(dense.begin());
-            dense.sort([](const rect_t& a, const rect_t& b) 
-                {return a.yi < b.yi;});
+            // dense.sort([](const rect_t& a, const rect_t& b) 
+            //     {return a.yi < b.yi;});
+        } else if (dense.empty() || (!dense.empty() 
+            && r.yi >= curY.begin()->yo)) {
 
-            // std::cout << r.xi << "," << r.yi << "," << r.xo 
-            //     << "," << r.yo << " was new" << std::endl;
-        } 
-
-        // std::cout << "if2: " << r.yi << " >= "
-        //     << (curY.size()>0 ? std::to_string(curY.begin()->yo) : " empty") 
-        //     << std::endl;
-        else if (dense.empty() || (!dense.empty() && r.yi >= curY.begin()->yo)) {
             // make the new rect blocks
             newBlocks(output, curX, oldY, curY.begin()->yo, maxCols);
 
             // update cur structure and remove top cur
             oldY = curY.begin()->yo;
-            // std::cout << curY.begin()->xi << "," << curY.begin()->yi 
-            //     << "," << curY.begin()->xo << "," << curY.begin()->yo 
-            //     << " was old" << std::endl;
             curX.erase(*curY.begin());
             curY.erase(curY.begin());
         }
-
-        // printMS(curX, curY);
-        // printMS(curX);
-
-        // std::cout << "dense|cur: " << dense.size() << "|" 
-        //     << curY.size() << "|" << curX.size() 
-        //     << "-------------------------------------------" 
-        //     << std::endl;
-
-        // // add a border to all rect regions
-        // cv::Mat final = input.clone();
-        // int ii=0;
-        // for (std::list<rect_t>::iterator r=output.begin(); 
-        //     r!=output.end(); r++) {
-
-        //     // draw areas for verification
-        //     cv::rectangle(final, cv::Point(r->xi,r->yi), 
-        //         cv::Point(r->xo,r->yo),(0,0,0),3);
-        //     cv::Point center(r->xi + (r->xo-r->xi)/2, r->yi + (r->yo-r->yi)/2);
-        //     putText(final, std::to_string(ii++), center, 1, 5, 
-        //         cv::Scalar(0), 3, 0);
-        // }
-        // cv::imwrite("./maskf.png", final);
-        // int i;
-        // std::cin >> i;
     }
 }
+
+/*****************************************************************************/
+/**                             Full AutoTiler                              **/
+/*****************************************************************************/
+/*****************************************************************************/
 
 std::list<rect_t> autoTiler(cv::Mat& input, int border, 
     int bgThreshold, int erosionSize) {
 
-    std::cout << "[autoTiler] Starting tiling" << std::endl;
+    // std::cout << "[autoTiler] Starting tiling" << std::endl;
 
     std::list<rect_t> output;
     
@@ -432,19 +325,6 @@ std::list<rect_t> autoTiler(cv::Mat& input, int border,
     // merge regions of interest together and mark them separately
     cv::Mat stats, centroids;
     cv::connectedComponentsWithStats(mask, mask, stats, centroids);
-
-    // std::cout << "STATS:" << std::endl;
-    // std::cout << "CC_STAT_LEFT: "   << stats.at<int>(10, cv::CC_STAT_LEFT)
-    //         << "\nCC_STAT_TOP: "    << stats.at<int>(10, cv::CC_STAT_TOP)
-    //         << "\nCC_STAT_WIDTH: "  << stats.at<int>(10, cv::CC_STAT_WIDTH)
-    //         << "\nCC_STAT_HEIGHT: " << stats.at<int>(10, cv::CC_STAT_HEIGHT)
-    //         << "\nCC_STAT_AREA: "   << stats.at<int>(10, cv::CC_STAT_AREA)
-    //         << std::endl;
-
-    // cv::Mat cm = mask.clone();
-    // cm.convertTo(cm, CV_8U);
-    // cv::applyColorMap(cm, cm, cl::COLORMAP_JET);
-    // cv::imwrite("./mask3.png", cm);
 
     double maxLabel;
     cv::minMaxLoc(mask, NULL, &maxLabel);
@@ -481,24 +361,22 @@ std::list<rect_t> autoTiler(cv::Mat& input, int border,
     // generate the background regions
     generateBackground(dense, output, input.cols, input);
 
-    // add a border to all rect regions
     std::cout << "[autoTiler] Total regions to process: " 
         << output.size() << std::endl;
-    cv::Mat final = input.clone();
+    // cv::Mat final = input.clone();
+        
+    // add a border to all rect regions
     for (std::list<rect_t>::iterator r=output.begin(); r!=output.end(); r++) {
-        // r->xi = std::min(r->xi-border, 0);
-        // r->xo = std::max(r->xo+border, input.cols);
-        // r->yi = std::min(r->yi-border, 0);
-        // r->yo = std::max(r->yo+border, input.rows);
+        r->xi = std::max(r->xi-border, 0);
+        r->xo = std::min(r->xo+border, input.cols);
+        r->yi = std::max(r->yi-border, 0);
+        r->yo = std::min(r->yo+border, input.rows);
 
-        // std:: cout << "(" << r->xi << "," << r->yi << "), (" 
-        //     << r->xo << "," << r->yo << ")" << std::endl;
-
-        // draw areas for verification
-        cv::rectangle(final, cv::Point(r->xi,r->yi), 
-            cv::Point(r->xo,r->yo),(0,0,0),3);
+        // // draw areas for verification
+        // cv::rectangle(final, cv::Point(r->xi,r->yi), 
+        //     cv::Point(r->xo,r->yo),(0,0,0),3);
     }
-    cv::imwrite("./maskf.png", final);
+    // cv::imwrite("./maskf.png", final);
 
     return output;
 }
